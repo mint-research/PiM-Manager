@@ -99,5 +99,69 @@ function Show-Menu {
     return $menu
 }
 
+# Neue Funktion: Show-ScriptMenu
+# Zeigt ein Menü für Skripte mit konsistenter Formatierung wie das Hauptmenü
+function Show-ScriptMenu {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$title,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$mode,
+        
+        [Parameter(Mandatory=$true)]
+        [hashtable]$options,
+        
+        [switch]$enableBack,
+        
+        [switch]$enableExit
+    )
+    
+    # Lösche die Konsole für ein sauberes Menü
+    Clear-Host
+    
+    # Header anzeigen
+    Show-Title $title $mode
+    
+    # Optionen anzeigen (in der Reihenfolge der Schlüssel)
+    $sortedKeys = $options.Keys | Sort-Object
+    foreach ($key in $sortedKeys) {
+        Write-Host "    $key       $($options[$key].Display)"
+    }
+    
+    # Leerzeile vor Navigation
+    Write-Host ""
+    
+    # Navigationsoptionen
+    if ($enableBack) {
+        Write-Host "    B       [back]      Zurück"
+    }
+    
+    if ($enableExit) {
+        Write-Host "    X       [exit]      Beenden"
+    }
+    
+    # Benutzereingabe abfragen
+    Write-Host ""
+    $choice = Read-Host "Wähle eine Option"
+    
+    # Eingabe verarbeiten
+    if ($options.ContainsKey($choice)) {
+        & $options[$choice].Action
+        return $choice
+    }
+    elseif ($choice -match "^[Bb]$" -and $enableBack) {
+        return "B"
+    }
+    elseif ($choice -match "^[Xx]$" -and $enableExit) {
+        return "X"
+    }
+    else {
+        Write-Host "Ungültige Option. Bitte erneut versuchen." -ForegroundColor Red
+        Start-Sleep -Seconds 2
+        Show-ScriptMenu -title $title -mode $mode -options $options -enableBack:$enableBack -enableExit:$enableExit
+    }
+}
+
 # Exportiere die Funktionen, damit das Hauptskript sie nutzen kann
-Export-ModuleMember -Function Show-Menu, Show-Title
+Export-ModuleMember -Function Show-Menu, Show-Title, Show-ScriptMenu

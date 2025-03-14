@@ -1,6 +1,34 @@
 # PiM-Manager.ps1 - Hauptskript mit ausgelagerter UI-Funktionalität und Session-Logging
 # Importiert das UX-Modul aus dem modules-Verzeichnis
 
+# Pfade für Konfiguration definieren
+$configPath = Join-Path -Path $PSScriptRoot -ChildPath "config"
+$settingsFile = Join-Path -Path $configPath -ChildPath "settings.json"
+
+# Prüfen, ob die Konfigurationsdatei existiert - wenn nicht, Initialisierung ausführen
+if (-not (Test-Path -Path $settingsFile)) {
+    Write-Host "Erste Ausführung erkannt. Konfiguration wird initialisiert..." -ForegroundColor Yellow
+    $initScript = Join-Path -Path $configPath -ChildPath "Initialize-DefaultSettings.ps1"
+    if (Test-Path -Path $initScript) {
+        & $initScript
+    } else {
+        Write-Host "Initialisierungsskript nicht gefunden: $initScript" -ForegroundColor Red
+        # Einfache Standardkonfiguration erstellen
+        if (-not (Test-Path -Path $configPath)) {
+            New-Item -ItemType Directory -Path $configPath -Force | Out-Null
+        }
+        $defaultSettings = @{
+            Logging = @{
+                Enabled = $false
+                Path = "docs\logs"
+                Mode = "PiM"
+            }
+        }
+        $defaultSettings | ConvertTo-Json -Depth 4 | Set-Content -Path $settingsFile
+        Write-Host "Standardkonfiguration wurde erstellt." -ForegroundColor Green
+    }
+}
+
 # Funktion zum Initialisieren des Loggings
 function Initialize-Logging {
     # Konfigurationspfade definieren
@@ -9,7 +37,8 @@ function Initialize-Logging {
     
     # Standardwerte
     $loggingEnabled = $false
-    $loggingPath = "docs\logging"
+    $loggingPath = "docs\logs"
+    $loggingMode = "PiM"
     
     # Überprüfen, ob die Konfigurationsdatei existiert
     if (Test-Path $settingsFile) {
@@ -17,6 +46,11 @@ function Initialize-Logging {
             $settings = Get-Content -Path $settingsFile -Raw | ConvertFrom-Json
             $loggingEnabled = $settings.Logging.Enabled
             $loggingPath = $settings.Logging.Path
+            
+            # Prüfen, ob der Mode-Parameter existiert
+            if (Get-Member -InputObject $settings.Logging -Name "Mode" -MemberType Properties) {
+                $loggingMode = $settings.Logging.Mode
+            }
         } catch {
             Write-Host "Fehler beim Lesen der Einstellungen: $_" -ForegroundColor Red
         }
@@ -33,14 +67,24 @@ function Initialize-Logging {
         
         # Zeitstempel für den Dateinamen generieren
         $timestamp = Get-Date -Format "yyyy-MM-dd-HH-mm-ss"
-        $logFile = Join-Path -Path $logDir -ChildPath "log-$timestamp.txt"
+        
+        # Suffix basierend auf dem Logging-Modus hinzufügen
+        $suffix = if ($loggingMode -eq "PowerShell") { "psh" } else { "pim" }
+        $logFile = Join-Path -Path $logDir -ChildPath "log-$timestamp-$suffix.txt"
         
         # Transcript starten
         Start-Transcript -Path $logFile -Append
-        Write-Host "Logging ist aktiviert. Session wird aufgezeichnet in: $logFile" -ForegroundColor Green
+        
+        $modeDisplay = if ($loggingMode -eq "PowerShell") { "PowerShell" } else { "PiM-Manager" }
+        Write-Host "Logging ist aktiviert für: $modeDisplay" -ForegroundColor Green
+        Write-Host "Session wird aufgezeichnet in: $logFile" -ForegroundColor Green
     }
     
-    return $loggingEnabled
+    # Ein Objekt mit Logging-Informationen zurückgeben
+    return [PSCustomObject]@{
+        Enabled = $loggingEnabled
+        Mode = $loggingMode
+    }
 }
 
 # UX-Modul importieren mit Fehlerbehandlung
@@ -137,8 +181,10 @@ function Start-Menu {
     }
 }
 
-# Initialisiere Logging
-$loggingEnabled = Initialize-Logging
+# Initialisiere Logging und speichere das Logging-Objekt
+$loggingInfo = Initialize-Logging
+$loggingEnabled = $loggingInfo.Enabled
+$loggingMode = $loggingInfo.Mode
 
 # Prüfe, ob die UX-Funktionen verfügbar sind
 if (Get-Command -Name Show-Menu -ErrorAction SilentlyContinue) {

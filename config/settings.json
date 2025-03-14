@@ -1,6 +1,7 @@
 {
   "Logging": {
-    "Enabled": true,
-    "Path": "docs\\logging"
+    "Enabled": false,
+    "Path": "docs\\logs",
+    "Mode": "PowerShell"
   }
 }
