@@ -1,0 +1,75 @@
+**********************
+PowerShell transcript start
+Start time: 20250314222915
+Username: LOCAL\esca-
+RunAs User: LOCAL\esca-
+Configuration Name: 
+Machine: LOCAL (Microsoft Windows NT 10.0.26100.0)
+Host Application: C:\Program Files\PowerShell\7\pwsh.dll -WorkingDirectory ~
+Process ID: 10064
+PSVersion: 7.5.0
+PSEdition: Core
+GitCommitId: 7.5.0
+OS: Microsoft Windows 10.0.26100
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+Logging aktiviert für: PiM-Manager
+Session wird aufgezeichnet: F:\GitHub\PiM-Manager\docs\logs\log-2025-03-14-22-29-15-pim.txt
+PiM-Manager wird gestartet...
+
+    +===============================================+
+                    PiM-Manager
+                    (User-Modus)
+    +===============================================+
+
+    1       [script]    beispiel-script.ps1
+    2       [script]    beispiel-user.ps1
+
+    M       [mode]      Admin-Modus
+    X       [exit]      Beenden
+
+    +===============================================+
+                    PiM-Manager
+                    (Admin-Modus)
+    +===============================================+
+
+    1       [script]    Logging.ps1
+
+    M       [mode]      User-Modus
+    X       [exit]      Beenden
+Ausführen: F:\GitHub\PiM-Manager\scripts\admin\Logging.ps1
++===============================================+
+|                Logging-Manager               |
++===============================================+
+
+Aktueller Logging-Status:
+Aktiviert - PiM-Manager
+Logs: F:\GitHub\PiM-Manager\docs\logs
+
+    1       [option]    Logging deaktivieren
+    2       [option]    Logging aktivieren - PiM-Manager
+    3       [option]    Logging aktivieren - PowerShell
+
+    B       [back]      Zurück
+    X       [exit]      Beenden
+
+PiM-Manager wird beendet...
+
+    +===============================================+
+                    PiM-Manager
+                    (Admin-Modus)
+    +===============================================+
+
+    1       [script]    Logging.ps1
+
+    M       [mode]      User-Modus
+    X       [exit]      Beenden
+Logging wird beendet...
+**********************
+PowerShell transcript end
+End time: 20250314222923
+**********************

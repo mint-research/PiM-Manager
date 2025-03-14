@@ -1,0 +1,41 @@
+# PiM-Manager .gitignore
+
+# Alle Log-Dateien ausschließen
+docs/logs/
+docs/logging/
+
+# Ausschließen von Konfigurationsdateien, die lokale Einstellungen enthalten
+# Auskommentieren Sie diese Zeile, wenn Sie möchten, dass settings.json im Repository enthalten ist
+config/*.json
+
+# Initialisierungsskript einschließen (soll im Repository enthalten sein)
+!config/Initialize-DefaultSettings.ps1
+
+# Wenn Sie nur bestimmte Konfigurationsdateien ausschließen möchten:
+# config/user-settings.json
+# config/credentials.json
+
+# Temporäre Dateien
+*.tmp
+*.temp
+~*
+
+# Betriebssystem-Dateien
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PowerShell-Module
+*.psd1
+*.psm1.bak
+
+# Backup-Dateien
+*.bak
+*.backup
+*~
+
+# Visual Studio Code Dateien (falls verwendet)
+.vscode/
+.vs/
+
+# Weitere spezifische Dateien oder Ordner können hier hinzugefügt werden

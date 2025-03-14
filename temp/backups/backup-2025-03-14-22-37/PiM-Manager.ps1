@@ -3,7 +3,6 @@
 # Pfade definieren
 $cfgPath = "$PSScriptRoot\config"
 $cfgFile = "$cfgPath\settings.json"
-$tempPath = "$PSScriptRoot\temp"
 
 # Erstinitialisierung prüfen
 if (-not (Test-Path $cfgFile)) {
@@ -18,7 +17,7 @@ if (-not (Test-Path $cfgFile)) {
         @{
             Logging = @{
                 Enabled = $false
-                Path = "temp\logs"
+                Path = "docs\logs"
                 Mode = "PiM"
             }
         } | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
@@ -26,17 +25,11 @@ if (-not (Test-Path $cfgFile)) {
     }
 }
 
-# Temp-Verzeichnis prüfen/erstellen
-if (-not (Test-Path $tempPath)) {
-    mkdir $tempPath -Force >$null
-    Write-Host "Temp-Verzeichnis erstellt: $tempPath" -ForegroundColor Green
-}
-
 # Logging initialisieren
 function InitLog {
     # Standardwerte
     $enabled = $false
-    $path = "temp\logs"
+    $path = "docs\logs"
     $mode = "PiM"
     
     # Konfiguration laden

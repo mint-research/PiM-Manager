@@ -1,12 +1,10 @@
 # Logging.ps1 - Aktivieren/Deaktivieren des Session-Loggings
-# DisplayName: Logging-Einstellungen
 # Optimiert für Tokeneffizienz
 
 # Pfadberechnung (2 Ebenen hoch vom scripts\admin)
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $cfgPath = "$root\config"
 $cfgFile = "$cfgPath\settings.json"
-$tempPath = "$root\temp"
 
 # UX-Modul importieren
 $modPath = "$root\modules\ux.psm1"
@@ -76,7 +74,7 @@ function EnableLog($Mode) {
             $cfg = [PSCustomObject]@{
                 Logging = [PSCustomObject]@{
                     Enabled = $false
-                    Path = "temp\logs"
+                    Path = "docs\logs"
                     Mode = "PiM"
                 }
             }
@@ -85,7 +83,7 @@ function EnableLog($Mode) {
         $cfg = [PSCustomObject]@{
             Logging = [PSCustomObject]@{
                 Enabled = $false
-                Path = "temp\logs"
+                Path = "docs\logs"
                 Mode = "PiM"
             }
         }
@@ -111,12 +109,6 @@ function EnableLog($Mode) {
     
     # Speichern
     $cfg | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
-    
-    # Temp-Verzeichnis prüfen/erstellen
-    if (-not (Test-Path $tempPath)) {
-        mkdir $tempPath -Force >$null
-        Write-Host "Temp-Verzeichnis erstellt: $tempPath" -ForegroundColor Green
-    }
     
     # Log-Verzeichnis erstellen
     $logPath = "$root\$($cfg.Logging.Path)"

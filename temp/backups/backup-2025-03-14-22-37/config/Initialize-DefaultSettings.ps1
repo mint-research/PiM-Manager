@@ -43,7 +43,7 @@ function InitCfg {
 $defaultSettings = [PSCustomObject]@{
     Logging = [PSCustomObject]@{
         Enabled = $false
-        Path = "temp\logs"
+        Path = "docs\logs"
         Mode = "PiM"
     }
 }

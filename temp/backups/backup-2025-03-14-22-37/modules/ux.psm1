@@ -17,36 +17,6 @@ function ShowTitle {
     Write-Host ""
 }
 
-# Skript-Metadaten auslesen
-function GetScriptMetadata {
-    param (
-        [string]$scriptPath
-    )
-    
-    # Default-Metadata
-    $meta = @{
-        DisplayName = [System.IO.Path]::GetFileNameWithoutExtension($scriptPath)
-    }
-    
-    # Prüfen, ob Datei existiert
-    if (-not (Test-Path $scriptPath -PathType Leaf)) {
-        return $meta
-    }
-    
-    # Ersten 10 Zeilen auslesen (für bessere Performance)
-    $content = Get-Content $scriptPath -TotalCount 10
-    
-    # Nach Metadaten suchen
-    foreach ($line in $content) {
-        # DisplayName-Metadaten suchen
-        if ($line -match '^\s*#\s*DisplayName\s*:\s*(.+)$') {
-            $meta.DisplayName = $matches[1].Trim()
-        }
-    }
-    
-    return $meta
-}
-
 # Menü anzeigen mit korrekter Ausrichtung
 function ShowMenu {
     param (
@@ -96,15 +66,7 @@ function ShowMenu {
             "file"
         }
         
-        $displayName = $item.Name
-        
-        # Bei PS1-Dateien nach DisplayName-Metadaten suchen
-        if ($type -eq "script") {
-            $meta = GetScriptMetadata -scriptPath $item.FullName
-            $displayName = $meta.DisplayName
-        }
-        
-        Write-Host "    $i       [$type]    $displayName"
+        Write-Host "    $i       [$type]    $($item.Name)"
         $menu[$i] = $item.FullName
         $i++
     }
@@ -193,4 +155,4 @@ function ShowScriptMenu {
 }
 
 # Funktionen exportieren
-Export-ModuleMember -Function ShowMenu, ShowTitle, ShowScriptMenu, GetScriptMetadata
+Export-ModuleMember -Function ShowMenu, ShowTitle, ShowScriptMenu
