@@ -1,18 +1,9 @@
 # Template.ps1 - Skript-Vorlage für PiM-Manager (Tokenoptimiert)
-# Pfad: scripts\admin\ oder scripts\
-# Version: 1.0
 # DisplayName: Mein Skript-Titel
 
 <#
 .SYNOPSIS
 Kurzbeschreibung des Skripts.
-
-.DESCRIPTION
-Ausführliche Funktionsbeschreibung.
-
-.NOTES
-Datum: DATUM
-Autor: AUTOR
 #>
 
 # Pfadberechnung nach Position
@@ -36,14 +27,14 @@ if (Test-Path $modPath) {
         Import-Module $modPath -Force -EA Stop 
         Write-Verbose "UX-Modul geladen: $modPath"
     } catch {
-        Write-Host "UX-Modulfehler: $_" -ForegroundColor Red
+        Write-Host "UX-Fehler: $_" -ForegroundColor Red
     }
 } else {
     Write-Host "UX-Modul nicht gefunden: $modPath" -ForegroundColor Red
 }
 
 # Admin-Rechte prüfen
-function CheckAdmin {
+function IsAdmin {
     if ($isAdmin) {
         # Berechtigungsprüfungen hier einfügen
         return $true
@@ -54,26 +45,26 @@ function CheckAdmin {
 # Log-Funktion
 function Log {
     param (
-        [Parameter(Mandatory=$true)]
-        [string]$msg,
+        [Parameter(Mandatory)]
+        [string]$m,
         
         [ValidateSet("Information", "Warning", "Error")]
-        [string]$type = "Information"
+        [string]$t = "Information"
     )
     
     # Zeitstempel
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $script = Split-Path -Leaf $PSCommandPath
+    $s = Split-Path -Leaf $PSCommandPath
     
     # Log formatieren
-    $logLine = "[$ts] [$script] [$type] $msg"
+    $l = "[$ts] [$s] [$t] $m"
     
     # Ausgabe (außer Information)
-    if ($type -ne "Information") {
-        $color = $type -eq "Error" ? "Red" : "Yellow"
-        Write-Host $logLine -ForegroundColor $color
+    if ($t -ne "Information") {
+        $c = $t -eq "Error" ? "Red" : "Yellow"
+        Write-Host $l -ForegroundColor $c
     } else {
-        Write-Verbose $logLine
+        Write-Verbose $l
     }
     
     # Hier könnte Datei-Logging implementiert werden
@@ -84,7 +75,7 @@ function Log {
 #########################################
 
 # Option 1
-function Option1 {
+function Opt1 {
     Log "Option 1 ausgewählt"
     Write-Host "Option 1 wird ausgeführt..." -ForegroundColor Cyan
     
@@ -93,11 +84,11 @@ function Option1 {
     # Pause danach
     Write-Host "`nTaste drücken für Menü..."
     [Console]::ReadKey($true) >$null
-    ShowMainMenu
+    Menu
 }
 
 # Option 2
-function Option2 {
+function Opt2 {
     Log "Option 2 ausgewählt"
     Write-Host "Option 2 wird ausgeführt..." -ForegroundColor Cyan
     
@@ -106,11 +97,11 @@ function Option2 {
     # Pause danach
     Write-Host "`nTaste drücken für Menü..."
     [Console]::ReadKey($true) >$null
-    ShowMainMenu
+    Menu
 }
 
 # Option 3
-function Option3 {
+function Opt3 {
     Log "Option 3 ausgewählt"
     Write-Host "Option 3 wird ausgeführt..." -ForegroundColor Cyan
     
@@ -118,20 +109,20 @@ function Option3 {
     $cfgFile = "$cfgPath\meinConfig.json"
     
     # Prüfen/Erstellen
-    if (-not (Test-Path $cfgFile)) {
-        $defCfg = @{
+    if (!(Test-Path $cfgFile)) {
+        $def = @{
             Setting1 = "Wert1"
             Setting2 = $true
             Setting3 = 42
         }
         
         # Verzeichnis prüfen
-        if (-not (Test-Path $cfgPath)) {
-            mkdir $cfgPath -Force >$null
+        if (!(Test-Path $cfgPath)) {
+            md $cfgPath -Force >$null
         }
         
         # Speichern
-        $defCfg | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
+        $def | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
         Write-Host "Konfiguration erstellt: $cfgFile" -ForegroundColor Green
     } else {
         # Lesen
@@ -140,30 +131,30 @@ function Option3 {
             Write-Host "Aktuelle Konfiguration:" -ForegroundColor Cyan
             $cfg | Format-Table | Out-Host
         } catch {
-            Log "Lesefehler: $_" -type "Error"
+            Log "Lesefehler: $_" -t "Error"
         }
     }
     
     # Pause
     Write-Host "`nTaste drücken für Menü..."
     [Console]::ReadKey($true) >$null
-    ShowMainMenu
+    Menu
 }
 
 # Untermenü
-function ShowSubMenu {
+function SubMenu {
     # UX-Funktion prüfen
-    $hasUX = Get-Command ShowScriptMenu -EA SilentlyContinue
+    $hasUX = Get-Command SMenu -EA SilentlyContinue
     
     # Untermenü-Optionen
-    $subOpts = @{
+    $opts = @{
         "1" = @{
             Display = "[option]    Unteroption 1"
             Action = { 
                 Log "Unteroption 1 ausgewählt"
                 Write-Host "Unteroption 1 wird ausgeführt..." -ForegroundColor Yellow
                 Start-Sleep -Seconds 2
-                ShowSubMenu 
+                SubMenu 
             }
         }
         "2" = @{
@@ -172,26 +163,26 @@ function ShowSubMenu {
                 Log "Unteroption 2 ausgewählt"
                 Write-Host "Unteroption 2 wird ausgeführt..." -ForegroundColor Yellow
                 Start-Sleep -Seconds 2
-                ShowSubMenu 
+                SubMenu 
             }
         }
     }
     
     if ($hasUX) {
         # UX-Funktion nutzen
-        $result = ShowScriptMenu -title "Untermenü" -mode ($isAdmin ? "Admin-Modus" : "User-Modus") -options $subOpts -enableBack -enableExit
+        $r = SMenu -t "Untermenü" -m ($isAdmin ? "Admin-Modus" : "User-Modus") -opts $opts -back -exit
         
-        # Die ShowScriptMenu-Funktion beendet den Prozess bereits bei X
+        # Die SMenu-Funktion beendet den Prozess bereits bei X
         # Wir müssen hier nur das Ergebnis B abfangen
-        if ($result -eq "B") {
-            ShowMainMenu
+        if ($r -eq "B") {
+            Menu
         }
     } else {
         # Einfaches Menü
         cls
         
-        if (Get-Command ShowTitle -EA SilentlyContinue) {
-            ShowTitle "Untermenü" ($isAdmin ? "Admin-Modus" : "User-Modus")
+        if (Get-Command Title -EA SilentlyContinue) {
+            Title "Untermenü" ($isAdmin ? "Admin-Modus" : "User-Modus")
         } else {
             Write-Host "+===============================================+"
             Write-Host "|                Untermenü                     |"
@@ -200,8 +191,8 @@ function ShowSubMenu {
         }
         
         # Optionen
-        foreach ($key in ($subOpts.Keys | Sort-Object)) {
-            Write-Host "    $key       $($subOpts[$key].Display)"
+        foreach ($k in ($opts.Keys | Sort)) {
+            Write-Host "    $k       $($opts[$k].Display)"
         }
         
         # Navigation
@@ -211,12 +202,93 @@ function ShowSubMenu {
         
         # Eingabe
         Write-Host ""
-        $choice = Read-Host "Option wählen"
+        $ch = Read-Host "Option wählen"
         
-        if ($choice -match "^[Xx]$") {
+        if ($ch -match "^[Xx]$") {
             Write-Host "PiM-Manager wird beendet..." -ForegroundColor Yellow
             exit
-        } elseif ($choice -match "^[Bb]$") {
-            ShowMainMenu
-        } elseif ($subOpts.ContainsKey($choice)) {
-            & $subOpts
+        } elseif ($ch -match "^[Bb]$") {
+            Menu
+        } elseif ($opts.ContainsKey($ch)) {
+            & $opts[$ch].Action
+        } else {
+            Write-Host "Ungültige Option." -ForegroundColor Red
+            Start-Sleep -Seconds 2
+            SubMenu
+        }
+    }
+}
+
+# Hauptmenü
+function Menu {
+    # UX-Funktion prüfen
+    $hasUX = Get-Command SMenu -EA SilentlyContinue
+    
+    # Menüoptionen
+    $opts = @{
+        "1" = @{
+            Display = "[option]    Option 1"
+            Action = { Opt1 }
+        }
+        "2" = @{
+            Display = "[option]    Option 2"
+            Action = { Opt2 }
+        }
+        "3" = @{
+            Display = "[option]    Option 3 (Konfiguration)"
+            Action = { Opt3 }
+        }
+        "4" = @{
+            Display = "[option]    Untermenü"
+            Action = { SubMenu }
+        }
+    }
+    
+    if ($hasUX) {
+        # UX-Modul nutzen
+        $r = SMenu -t "Mein Skript-Titel" -m ($isAdmin ? "Admin-Modus" : "User-Modus") -opts $opts -back -exit
+        
+        if ($r -eq "B") {
+            return
+        }
+    } else {
+        # Fallback-Menü
+        cls
+        Write-Host "+===============================================+"
+        Write-Host "|             Mein Skript-Titel                |"
+        Write-Host "|         $($isAdmin ? '(Admin-Modus)' : '(User-Modus)')        |"
+        Write-Host "+===============================================+"
+        
+        # Optionen anzeigen
+        foreach ($k in ($opts.Keys | Sort)) {
+            Write-Host "    $k       $($opts[$k].Display)"
+        }
+        
+        # Navigation
+        Write-Host ""
+        Write-Host "    B       [back]      Zurück"
+        Write-Host "    X       [exit]      Beenden"
+        
+        # Eingabe
+        Write-Host ""
+        $ch = Read-Host "Option wählen"
+        
+        if ($ch -match "^[Xx]$") {
+            Write-Host "PiM-Manager wird beendet..." -ForegroundColor Yellow
+            exit
+        } elseif ($ch -match "^[Bb]$") {
+            return
+        } elseif ($opts.ContainsKey($ch)) {
+            & $opts[$ch].Action
+        } else {
+            Write-Host "Ungültige Option." -ForegroundColor Red
+            Start-Sleep -Seconds 2
+            Menu
+        }
+    }
+}
+
+# Skriptstart
+Log "Skript gestartet" -t "Information"
+Menu
+Log "Skript beendet" -t "Information"

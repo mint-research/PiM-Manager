@@ -6,7 +6,7 @@ $cfgFile = "$cfgPath\settings.json"
 $tempPath = "$PSScriptRoot\temp"
 
 # Erstinitialisierung prüfen
-if (-not (Test-Path $cfgFile)) {
+if (!(Test-Path $cfgFile)) {
     Write-Host "Erststart erkannt. Konfiguration wird initialisiert..." -ForegroundColor Yellow
     $initScript = "$cfgPath\Initialize-DefaultSettings.ps1"
     if (Test-Path $initScript) {
@@ -14,7 +14,7 @@ if (-not (Test-Path $cfgFile)) {
     } else {
         Write-Host "Initialisierungsskript nicht gefunden: $initScript" -ForegroundColor Red
         # Einfache Standardkonfiguration
-        if (-not (Test-Path $cfgPath)) { mkdir $cfgPath -Force >$null }
+        if (!(Test-Path $cfgPath)) { md $cfgPath -Force >$null }
         @{
             Logging = @{
                 Enabled = $false
@@ -27,28 +27,28 @@ if (-not (Test-Path $cfgFile)) {
 }
 
 # Temp-Verzeichnis prüfen/erstellen
-if (-not (Test-Path $tempPath)) {
-    mkdir $tempPath -Force >$null
+if (!(Test-Path $tempPath)) {
+    md $tempPath -Force >$null
     Write-Host "Temp-Verzeichnis erstellt: $tempPath" -ForegroundColor Green
 }
 
 # Logging initialisieren
-function InitLog {
+function ILog {
     # Standardwerte
-    $enabled = $false
-    $path = "temp\logs"
-    $mode = "PiM"
+    $en = $false
+    $p = "temp\logs"
+    $m = "PiM"
     
     # Konfiguration laden
     if (Test-Path $cfgFile) {
         try {
             $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
-            $enabled = $cfg.Logging.Enabled
-            $path = $cfg.Logging.Path
+            $en = $cfg.Logging.Enabled
+            $p = $cfg.Logging.Path
             
             # Mode-Parameter prüfen
             if (Get-Member -InputObject $cfg.Logging -Name "Mode" -MemberType Properties) {
-                $mode = $cfg.Logging.Mode
+                $m = $cfg.Logging.Mode
             }
         } catch {
             Write-Host "Fehler beim Lesen: $_" -ForegroundColor Red
@@ -56,29 +56,29 @@ function InitLog {
     }
     
     # Logging starten wenn aktiviert
-    if ($enabled) {
-        $logDir = "$PSScriptRoot\$path"
+    if ($en) {
+        $logDir = "$PSScriptRoot\$p"
         
         # Verzeichnis erstellen
-        if (-not (Test-Path $logDir)) { mkdir $logDir -Force >$null }
+        if (!(Test-Path $logDir)) { md $logDir -Force >$null }
         
         # Dateiname mit Zeitstempel
         $ts = Get-Date -Format "yyyy-MM-dd-HH-mm-ss"
-        $suffix = $mode -eq "PowerShell" ? "psh" : "pim"
-        $logFile = "$logDir\log-$ts-$suffix.txt"
+        $sfx = $m -eq "PowerShell" ? "psh" : "pim"
+        $logFile = "$logDir\log-$ts-$sfx.txt"
         
         # Transcript starten
         Start-Transcript -Path $logFile -Append
         
-        $modeText = $mode -eq "PowerShell" ? "PowerShell" : "PiM-Manager"
-        Write-Host "Logging aktiviert für: $modeText" -ForegroundColor Green
+        $mText = $m -eq "PowerShell" ? "PowerShell" : "PiM-Manager"
+        Write-Host "Logging aktiviert für: $mText" -ForegroundColor Green
         Write-Host "Session wird aufgezeichnet: $logFile" -ForegroundColor Green
     }
     
     # Logging-Info zurückgeben
     return [PSCustomObject]@{
-        Enabled = $enabled
-        Mode = $mode
+        Enabled = $en
+        Mode = $m
     }
 }
 
@@ -101,65 +101,65 @@ if (Test-Path $modPath) {
 }
 
 # Menüsystem starten
-function StartMenu {
+function Menu {
     # Pfade definieren
-    $scriptsPath = "$PSScriptRoot\scripts"
-    $adminPath = "$scriptsPath\admin"
+    $sPath = "$PSScriptRoot\scripts"
+    $aPath = "$sPath\admin"
     
     # Verzeichnisse prüfen/erstellen
-    if (-not (Test-Path $scriptsPath)) {
+    if (!(Test-Path $sPath)) {
         Write-Host "Verzeichnis 'scripts' nicht gefunden. Wird erstellt..." -ForegroundColor Yellow
-        mkdir $scriptsPath -Force >$null
+        md $sPath -Force >$null
     }
     
-    if (-not (Test-Path $adminPath)) {
+    if (!(Test-Path $aPath)) {
         Write-Host "Verzeichnis 'scripts\admin' nicht gefunden. Wird erstellt..." -ForegroundColor Yellow
-        mkdir $adminPath -Force >$null
+        md $aPath -Force >$null
     }
     
     $isAdmin = $false
-    $pathStack = New-Object System.Collections.Stack
-    $curPath = $scriptsPath
+    $pStack = New-Object System.Collections.Stack
+    $curPath = $sPath
 
     while ($true) {
         # Pfad nach Modus setzen
-        if ($isAdmin -and $pathStack.Count -eq 0) {
-            $curPath = $adminPath
-        } elseif (-not $isAdmin -and $pathStack.Count -eq 0) {
-            $curPath = $scriptsPath
+        if ($isAdmin -and $pStack.Count -eq 0) {
+            $curPath = $aPath
+        } elseif (!$isAdmin -and $pStack.Count -eq 0) {
+            $curPath = $sPath
         }
 
         # Hauptmenü-Check
-        $isRoot = $pathStack.Count -eq 0
-        $parent = if (-not $isRoot) { $pathStack.Peek() } else { "" }
+        $isRoot = $pStack.Count -eq 0
+        $parent = if (!$isRoot) { $pStack.Peek() } else { "" }
 
         # Menü anzeigen
         $menu = ShowMenu $curPath $isRoot $parent
-        $choice = Read-Host "`nOption wählen"
+        $ch = Read-Host "`nOption wählen"
 
         # Eingabe verarbeiten
-        if ($choice -match "^[Xx]$") { 
+        if ($ch -match "^[Xx]$") { 
             # Beenden
             break  
         }
-        elseif ($choice -match "^[Mm]$") {
+        elseif ($ch -match "^[Mm]$") {
             # Modus wechseln
-            $isAdmin = -not $isAdmin
-            $pathStack.Clear()
-            $curPath = $isAdmin ? $adminPath : $scriptsPath
+            $isAdmin = !$isAdmin
+            $pStack.Clear()
+            $curPath = $isAdmin ? $aPath : $sPath
         }
-        elseif ($choice -match "^[Bb]$" -and -not $isRoot) {
+        elseif ($ch -match "^[Bb]$" -and !$isRoot) {
             # Zurück
-            $curPath = $pathStack.Pop()
+            $curPath = $pStack.Pop()
         }
-        elseif ($menu.ContainsKey([int]$choice)) {
+        elseif ($menu.ContainsKey([int]$ch)) {
             # Menüeintrag
-            $item = $menu[[int]$choice]
+            $item = $menu[[int]$ch]
             if (Test-Path $item -PathType Container) {
                 # In Ordner navigieren
                 Write-Host "Navigiere zu: $item" -ForegroundColor Yellow
                 Start-Sleep -Seconds 1
-                $pathStack.Push($curPath)
+                $pStack.Push($curPath)
                 $curPath = $item
             } 
             elseif ($item -match "\.ps1$") {
@@ -173,14 +173,14 @@ function StartMenu {
 }
 
 # Logging initialisieren
-$logInfo = InitLog
+$logInfo = ILog
 $logEnabled = $logInfo.Enabled
 $logMode = $logInfo.Mode
 
 # UX-Funktionen prüfen und starten
 if (Get-Command ShowMenu -EA SilentlyContinue) {
     Write-Host "PiM-Manager wird gestartet..." -ForegroundColor Green
-    StartMenu
+    Menu
 } else {
     Write-Host "❌ Fehler: Funktion 'ShowMenu' nicht gefunden. Prüfe 'modules\ux.psm1'." -ForegroundColor Red
 }

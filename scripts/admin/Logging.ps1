@@ -12,11 +12,11 @@ $tempPath = "$root\temp"
 $modPath = "$root\modules\ux.psm1"
 if (Test-Path $modPath) {
     try { Import-Module $modPath -Force -EA Stop }
-    catch { Write-Host "UX-Modul-Fehler: $_" -ForegroundColor Red }
+    catch { Write-Host "UX-Fehler: $_" -ForegroundColor Red }
 }
 
 # Logging-Status anzeigen
-function ShowStatus {
+function Status {
     if (Test-Path $cfgFile) {
         try {
             $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
@@ -44,7 +44,7 @@ function ShowStatus {
 }
 
 # Logging deaktivieren
-function DisableLog {
+function Disable {
     if (Test-Path $cfgFile) {
         try {
             $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
@@ -59,15 +59,15 @@ function DisableLog {
 }
 
 # PiM-Logging aktivieren
-function EnablePiM { EnableLog "PiM" }
+function EnablePiM { Enable "PiM" }
 
 # PowerShell-Logging aktivieren
-function EnablePSH { EnableLog "PowerShell" }
+function EnablePSH { Enable "PowerShell" }
 
 # Helper: Logging mit Modus aktivieren
-function EnableLog($Mode) {
+function Enable($Mode) {
     # Konfigurationspfad prüfen/erstellen
-    if (-not (Test-Path $cfgPath)) { mkdir $cfgPath -Force >$null }
+    if (!(Test-Path $cfgPath)) { md $cfgPath -Force >$null }
     
     # Konfiguration laden oder erstellen
     if (Test-Path $cfgFile) {
@@ -95,7 +95,7 @@ function EnableLog($Mode) {
     $cfg.Logging.Enabled = $true
     
     # Mode-Parameter prüfen und setzen
-    if (-not (Get-Member -InputObject $cfg.Logging -Name "Mode" -MemberType Properties)) {
+    if (!(Get-Member -InputObject $cfg.Logging -Name "Mode" -MemberType Properties)) {
         $newLog = [PSCustomObject]@{
             Enabled = $cfg.Logging.Enabled
             Path = $cfg.Logging.Path
@@ -113,86 +113,86 @@ function EnableLog($Mode) {
     $cfg | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
     
     # Temp-Verzeichnis prüfen/erstellen
-    if (-not (Test-Path $tempPath)) {
-        mkdir $tempPath -Force >$null
+    if (!(Test-Path $tempPath)) {
+        md $tempPath -Force >$null
         Write-Host "Temp-Verzeichnis erstellt: $tempPath" -ForegroundColor Green
     }
     
     # Log-Verzeichnis erstellen
     $logPath = "$root\$($cfg.Logging.Path)"
-    if (-not (Test-Path $logPath)) {
-        mkdir $logPath -Force >$null
+    if (!(Test-Path $logPath)) {
+        md $logPath -Force >$null
         Write-Host "Log-Verzeichnis erstellt: $logPath" -ForegroundColor Green
     }
     
-    $modeText = $Mode -eq "PowerShell" ? "PowerShell" : "PiM-Manager"
-    Write-Host "Logging aktiviert für: $modeText" -ForegroundColor Green
+    $mText = $Mode -eq "PowerShell" ? "PowerShell" : "PiM-Manager"
+    Write-Host "Logging aktiviert für: $mText" -ForegroundColor Green
     Write-Host "Änderung bei nächster Session wirksam." -ForegroundColor Cyan
 }
 
 # Hauptmenü mit optimierter Implementierung
-function ShowMenu {
-    $hasUX = Get-Command Show-ScriptMenu -EA SilentlyContinue
+function Menu {
+    $hasUX = Get-Command SMenu -EA SilentlyContinue
     
     # Menüoptionen
     $menu = @{
         "1" = @{
             Display = "[option]    Logging deaktivieren"
             Action = { 
-                DisableLog
-                ShowStatus
+                Disable
+                Status
                 Write-Host "`nTaste drücken für Menü..."
                 [Console]::ReadKey($true) >$null
-                ShowMenu
+                Menu
             }
         }
         "2" = @{
             Display = "[option]    Logging aktivieren - PiM-Manager"
             Action = { 
                 EnablePiM
-                ShowStatus
+                Status
                 Write-Host "`nTaste drücken für Menü..."
                 [Console]::ReadKey($true) >$null
-                ShowMenu
+                Menu
             }
         }
         "3" = @{
             Display = "[option]    Logging aktivieren - PowerShell"
             Action = { 
                 EnablePSH
-                ShowStatus
+                Status
                 Write-Host "`nTaste drücken für Menü..."
                 [Console]::ReadKey($true) >$null
-                ShowMenu
+                Menu
             }
         }
     }
 
     if ($hasUX) {
         # UX-Modul nutzen
-        $result = ShowScriptMenu -title "Logging-Manager" -mode "Admin-Modus" -options $menu -enableBack -enableExit
+        $result = SMenu -t "Logging-Manager" -m "Admin-Modus" -opts $menu -back -exit
         
-        # Die ShowScriptMenu-Funktion beendet den Prozess bereits bei X 
+        # Die SMenu-Funktion beendet den Prozess bereits bei X 
         # Wir müssen hier nur das Ergebnis B abfangen
         if ($result -eq "B") { return }
     } else {
         # Fallback zur einfachen Methode
         cls
         
-        if (Get-Command Show-Title -EA SilentlyContinue) {
-            Show-Title "Logging-Manager" "Admin-Modus"
+        if (Get-Command Title -EA SilentlyContinue) {
+            Title "Logging-Manager" "Admin-Modus"
         } else {
             Write-Host "+===============================================+"
             Write-Host "|                Logging-Manager               |"
             Write-Host "+===============================================+"
         }
         
-        ShowStatus
+        Status
         Write-Host ""
         
         # Optionen anzeigen
-        foreach ($key in ($menu.Keys | Sort-Object)) {
-            Write-Host "    $key       $($menu[$key].Display)"
+        foreach ($k in ($menu.Keys | Sort)) {
+            Write-Host "    $k       $($menu[$k].Display)"
         }
         
         Write-Host ""
@@ -200,22 +200,22 @@ function ShowMenu {
         Write-Host "    X       [exit]      Beenden"
         
         Write-Host ""
-        $choice = Read-Host "Option wählen"
+        $ch = Read-Host "Option wählen"
         
-        if ($choice -match "^[Xx]$") {
+        if ($ch -match "^[Xx]$") {
             Write-Host "PiM-Manager wird beendet..." -ForegroundColor Yellow
             exit
-        } elseif ($choice -match "^[Bb]$") {
+        } elseif ($ch -match "^[Bb]$") {
             return
-        } elseif ($menu.ContainsKey($choice)) {
-            & $menu[$choice].Action
+        } elseif ($menu.ContainsKey($ch)) {
+            & $menu[$ch].Action
         } else {
             Write-Host "Ungültige Option." -ForegroundColor Red
             Start-Sleep -Seconds 2
-            ShowMenu
+            Menu
         }
     }
 }
 
 # Menü starten
-ShowMenu
+Menu

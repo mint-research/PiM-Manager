@@ -7,40 +7,40 @@ $cfgPath = $PSScriptRoot
 $rootPath = Split-Path -Parent $PSScriptRoot
 
 # Verzeichnisprüfung
-if (-not (Test-Path $cfgPath)) {
-    mkdir $cfgPath -Force >$null
+if (!(Test-Path $cfgPath)) {
+    md $cfgPath -Force >$null
     Write-Host "Konfigurationsverzeichnis erstellt: $cfgPath" -ForegroundColor Green
 }
 
 # Konfigurationsdatei erstellen/aktualisieren
-function InitCfg {
+function Init {
     param (
-        [Parameter(Mandatory=$true)]
-        [string]$file,
+        [Parameter(Mandatory)]
+        [string]$f,
         
-        [Parameter(Mandatory=$true)]
-        [PSCustomObject]$defaults,
+        [Parameter(Mandatory)]
+        [PSCustomObject]$def,
         
         [switch]$force
     )
     
-    $path = "$cfgPath\$file"
+    $p = "$cfgPath\$f"
     
     # Erstellen wenn nicht vorhanden oder Überschreiben erzwungen
-    if (-not (Test-Path $path) -or $force) {
+    if (!(Test-Path $p) -or $force) {
         try {
-            $defaults | ConvertTo-Json -Depth 4 | Set-Content $path
-            Write-Host "Konfiguration erstellt: $file" -ForegroundColor Green
+            $def | ConvertTo-Json -Depth 4 | Set-Content $p
+            Write-Host "Konfiguration erstellt: $f" -ForegroundColor Green
         } catch {
-            Write-Host "Fehler: $file - $_" -ForegroundColor Red
+            Write-Host "Fehler: $f - $_" -ForegroundColor Red
         }
     } else {
-        Write-Host "Konfiguration existiert: $file" -ForegroundColor Yellow
+        Write-Host "Konfiguration existiert: $f" -ForegroundColor Yellow
     }
 }
 
 # settings.json (Logging)
-$defaultSettings = [PSCustomObject]@{
+$defSettings = [PSCustomObject]@{
     Logging = [PSCustomObject]@{
         Enabled = $false
         Path = "temp\logs"
@@ -49,7 +49,7 @@ $defaultSettings = [PSCustomObject]@{
 }
 
 # Konfigurationen erstellen
-InitCfg -file "settings.json" -defaults $defaultSettings
+Init -f "settings.json" -def $defSettings
 
 # user-settings.json
 $userSettings = [PSCustomObject]@{
@@ -60,7 +60,7 @@ $userSettings = [PSCustomObject]@{
 }
 
 # Nur erstellen wenn nicht vorhanden
-InitCfg -file "user-settings.json" -defaults $userSettings
+Init -f "user-settings.json" -def $userSettings
 
 # Installationshinweis
 Write-Host "`nKonfigurationen überprüft." -ForegroundColor Cyan
@@ -68,11 +68,11 @@ Write-Host "Dieses Skript kann bei jeder Installation ausgeführt werden," -Fore
 Write-Host "um alle erforderlichen Konfigurationsdateien zu erstellen." -ForegroundColor Cyan
 
 # Reset-Abfrage
-$reset = Read-Host "`nAlle Konfigurationen zurücksetzen? (j/n)"
-if ($reset -eq "j") {
+$r = Read-Host "`nAlle Konfigurationen zurücksetzen? (j/n)"
+if ($r -eq "j") {
     # Alle mit Standardwerten überschreiben
-    InitCfg -file "settings.json" -defaults $defaultSettings -force
-    InitCfg -file "user-settings.json" -defaults $userSettings -force
+    Init -f "settings.json" -def $defSettings -force
+    Init -f "user-settings.json" -def $userSettings -force
     
     Write-Host "`nAlle Konfigurationen zurückgesetzt." -ForegroundColor Green
 }
