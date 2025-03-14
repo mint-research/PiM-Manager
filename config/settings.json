@@ -1,0 +1,6 @@
+{
+  "Logging": {
+    "Enabled": true,
+    "Path": "docs\\logging"
+  }
+}
