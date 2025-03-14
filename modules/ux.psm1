@@ -1,8 +1,8 @@
-# ux.psm1 - Enthält alle UI-Funktionen für den PiM-Manager
-# Wird im modules-Verzeichnis abgelegt
+# ux.psm1 - UI-Funktionen für den PiM-Manager (Tokenoptimiert)
+# Speicherort: modules-Verzeichnis
 
-# Funktion zum Anzeigen des Titels
-function Show-Title {
+# Titel anzeigen
+function ShowTitle {
     param (
         [string]$title,
         [string]$mode
@@ -17,80 +17,71 @@ function Show-Title {
     Write-Host ""
 }
 
-# Funktion zur Anzeige des Menüs mit korrekter Ausrichtung
-function Show-Menu {
+# Menü anzeigen mit korrekter Ausrichtung
+function ShowMenu {
     param (
-        [string]$currentPath,
-        [bool]$isRootMenu = $true,
-        [string]$parentPath = ""
+        [string]$path,
+        [bool]$isRoot = $true,
+        [string]$parent = ""
     )
 
-    # Lösche die Konsole für ein sauberes Menü
-    Clear-Host
+    # Konsole löschen
+    cls
 
-    # Überprüfen ob der Pfad existiert
-    if (-not (Test-Path -Path $currentPath)) {
-        Write-Host "Fehler: Das Verzeichnis '$currentPath' existiert nicht" -ForegroundColor Red
+    # Pfad-Existenz prüfen
+    if (-not (Test-Path $path)) {
+        Write-Host "Fehler: Verzeichnis '$path' nicht gefunden" -ForegroundColor Red
         Write-Host "Erstelle Verzeichnis..." -ForegroundColor Yellow
-        New-Item -ItemType Directory -Path $currentPath -Force | Out-Null
+        mkdir $path -Force >$null
     }
 
-    # Modusnamen bestimmen
-    $modeName = if ($currentPath -match "admin") { "Admin-Modus" } else { "User-Modus" }
+    # Modus bestimmen
+    $mode = $path -match "admin" ? "Admin-Modus" : "User-Modus"
 
     # Header anzeigen
-    Show-Title "PiM-Manager" $modeName
+    ShowTitle "PiM-Manager" $mode
 
-    # Sortierte Liste erstellen (Ordner zuerst, dann Dateien)
-    $sortedItems = @()
+    # Sortierte Items erstellen (Ordner zuerst, dann Dateien)
+    $items = @()
     
-    # Zuerst alle Ordner hinzufügen, außer admin im User-Modus
-    Get-ChildItem -Path $currentPath | Where-Object { 
+    # Ordner hinzufügen (außer admin im User-Modus)
+    Get-ChildItem $path | ? { 
         $_.PSIsContainer -and 
-        -not ($modeName -eq "User-Modus" -and $_.Name -eq "admin" -and $currentPath -match "scripts$") 
-    } | Sort-Object Name | ForEach-Object {
-        $sortedItems += $_
-    }
+        -not ($mode -eq "User-Modus" -and $_.Name -eq "admin" -and $path -match "scripts$") 
+    } | Sort-Object Name | % { $items += $_ }
     
-    # Dann alle Dateien hinzufügen
-    Get-ChildItem -Path $currentPath | Where-Object { -not $_.PSIsContainer } | Sort-Object Name | ForEach-Object {
-        $sortedItems += $_
-    }
+    # Dateien hinzufügen
+    Get-ChildItem $path | ? { -not $_.PSIsContainer } | Sort-Object Name | % { $items += $_ }
     
-    $menu = @{ }
+    $menu = @{}
 
-    # Menüeinträge anzeigen mit einheitlicher Ausrichtung
-    $index = 1
-    foreach ($item in $sortedItems) {
-        if ($item.PSIsContainer) {
-            # Ordner anzeigen
-            Write-Host "    $index       [folder]    $($item.Name)"
-        } 
-        elseif ($item.Extension -eq ".ps1") {
-            # Skript anzeigen
-            Write-Host "    $index       [script]    $($item.Name)"
-        }
-        else {
-            # Andere Dateien anzeigen
-            Write-Host "    $index       [file]      $($item.Name)"
+    # Einträge anzeigen
+    $i = 1
+    foreach ($item in $items) {
+        $type = if ($item.PSIsContainer) {
+            "folder"
+        } elseif ($item.Extension -eq ".ps1") {
+            "script"
+        } else {
+            "file"
         }
         
-        # Speichern für späteren Zugriff
-        $menu[$index] = $item.FullName
-        $index++
+        Write-Host "    $i       [$type]    $($item.Name)"
+        $menu[$i] = $item.FullName
+        $i++
     }
 
-    # Falls keine Einträge vorhanden sind, Hinweis anzeigen
-    if ($index -eq 1) {
+    # Leere Menü-Info
+    if ($i -eq 1) {
         Write-Host "    (Keine Einträge vorhanden)" -ForegroundColor Yellow
     }
 
-    # Fußzeile anzeigen mit einheitlicher Ausrichtung zu den Menüeinträgen
+    # Fußzeile mit Optionen
     Write-Host ""
-    Write-Host "    M       [mode]      $(if ($modeName -eq 'Admin-Modus') {'User-Modus'} else {'Admin-Modus'})"
+    Write-Host "    M       [mode]      $(if ($mode -eq 'Admin-Modus') {'User-Modus'} else {'Admin-Modus'})"
     
-    # Zurück-Option anzeigen, wenn nicht im Hauptmenü
-    if (-not $isRootMenu) {
+    # Zurück-Option
+    if (-not $isRoot) {
         Write-Host "    B       [back]      Zurück"
     }
     
@@ -99,9 +90,8 @@ function Show-Menu {
     return $menu
 }
 
-# Neue Funktion: Show-ScriptMenu
-# Zeigt ein Menü für Skripte mit konsistenter Formatierung wie das Hauptmenü
-function Show-ScriptMenu {
+# Skriptmenü anzeigen mit konsistenter Formatierung
+function ShowScriptMenu {
     param (
         [Parameter(Mandatory=$true)]
         [string]$title,
@@ -117,22 +107,22 @@ function Show-ScriptMenu {
         [switch]$enableExit
     )
     
-    # Lösche die Konsole für ein sauberes Menü
-    Clear-Host
+    # Konsole löschen
+    cls
     
     # Header anzeigen
-    Show-Title $title $mode
+    ShowTitle $title $mode
     
-    # Optionen anzeigen (in der Reihenfolge der Schlüssel)
-    $sortedKeys = $options.Keys | Sort-Object
-    foreach ($key in $sortedKeys) {
+    # Optionen anzeigen
+    $keys = $options.Keys | Sort-Object
+    foreach ($key in $keys) {
         Write-Host "    $key       $($options[$key].Display)"
     }
     
-    # Leerzeile vor Navigation
+    # Leerzeile
     Write-Host ""
     
-    # Navigationsoptionen
+    # Navigation
     if ($enableBack) {
         Write-Host "    B       [back]      Zurück"
     }
@@ -141,27 +131,28 @@ function Show-ScriptMenu {
         Write-Host "    X       [exit]      Beenden"
     }
     
-    # Benutzereingabe abfragen
+    # Eingabe
     Write-Host ""
-    $choice = Read-Host "Wähle eine Option"
+    $choice = Read-Host "Option wählen"
     
-    # Eingabe verarbeiten
-    if ($options.ContainsKey($choice)) {
-        & $options[$choice].Action
-        return $choice
+    # Verarbeiten
+    if ($choice -match "^[Xx]$" -and $enableExit) {
+        Write-Host "PiM-Manager wird beendet..." -ForegroundColor Yellow
+        exit
     }
     elseif ($choice -match "^[Bb]$" -and $enableBack) {
         return "B"
     }
-    elseif ($choice -match "^[Xx]$" -and $enableExit) {
-        return "X"
+    elseif ($options.ContainsKey($choice)) {
+        & $options[$choice].Action
+        return $choice
     }
     else {
-        Write-Host "Ungültige Option. Bitte erneut versuchen." -ForegroundColor Red
+        Write-Host "Ungültige Option." -ForegroundColor Red
         Start-Sleep -Seconds 2
-        Show-ScriptMenu -title $title -mode $mode -options $options -enableBack:$enableBack -enableExit:$enableExit
+        ShowScriptMenu -title $title -mode $mode -options $options -enableBack:$enableBack -enableExit:$enableExit
     }
 }
 
-# Exportiere die Funktionen, damit das Hauptskript sie nutzen kann
-Export-ModuleMember -Function Show-Menu, Show-Title, Show-ScriptMenu
+# Funktionen exportieren
+Export-ModuleMember -Function ShowMenu, ShowTitle, ShowScriptMenu

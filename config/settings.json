@@ -1,7 +1,7 @@
 {
   "Logging": {
-    "Enabled": false,
+    "Enabled": true,
     "Path": "docs\\logs",
-    "Mode": "PowerShell"
+    "Mode": "PiM"
   }
 }

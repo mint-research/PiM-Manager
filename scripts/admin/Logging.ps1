@@ -1,37 +1,27 @@
-# Logging.ps1 - Script zum Aktivieren und Deaktivieren des Session-Loggings
-# Speichert Einstellungen in config\settings.json
+# Logging.ps1 - Aktivieren/Deaktivieren des Session-Loggings
+# Optimiert für Tokeneffizienz
 
-# Aktuelles Verzeichnis bestimmen (2 Ebenen nach oben vom scripts\admin Verzeichnis)
-$rootPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$configPath = Join-Path -Path $rootPath -ChildPath "config"
-$settingsFile = Join-Path -Path $configPath -ChildPath "settings.json"
+# Pfadberechnung (2 Ebenen hoch vom scripts\admin)
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$cfgPath = "$root\config"
+$cfgFile = "$cfgPath\settings.json"
 
-# UX-Modul importieren mit Fehlerbehandlung
-$modulePath = Join-Path -Path $rootPath -ChildPath "modules\ux.psm1"
-
-if (Test-Path -Path $modulePath) {
-    try {
-        Import-Module $modulePath -Force -ErrorAction Stop
-        Write-Host "UX-Modul erfolgreich geladen." -ForegroundColor Green
-    } catch {
-        Write-Host "Fehler beim Laden des UX-Moduls: $_" -ForegroundColor Red
-        # Fahre dennoch fort, aber ohne UX-Modul-Funktionen
-    }
-} else {
-    Write-Host "UX-Modul konnte nicht gefunden werden: $modulePath" -ForegroundColor Red
-    # Fahre dennoch fort, aber ohne UX-Modul-Funktionen
+# UX-Modul importieren
+$modPath = "$root\modules\ux.psm1"
+if (Test-Path $modPath) {
+    try { Import-Module $modPath -Force -EA Stop }
+    catch { Write-Host "UX-Modul-Fehler: $_" -ForegroundColor Red }
 }
 
-# Funktion zur Anzeige des aktuellen Logging-Status
-function Show-LoggingStatus {
-    # Überprüfen, ob die Konfigurationsdatei existiert
-    if (Test-Path $settingsFile) {
+# Logging-Status anzeigen
+function ShowStatus {
+    if (Test-Path $cfgFile) {
         try {
-            $settings = Get-Content -Path $settingsFile -Raw | ConvertFrom-Json
+            $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
             
-            if ($settings.Logging.Enabled) {
-                $mode = $settings.Logging.Mode
-                $status = if ($mode -eq "PowerShell") { "Aktiviert - PowerShell" } else { "Aktiviert - PiM-Manager" }
+            if ($cfg.Logging.Enabled) {
+                $mode = $cfg.Logging.Mode
+                $status = $mode -eq "PowerShell" ? "Aktiviert - PowerShell" : "Aktiviert - PiM-Manager"
                 $color = "Green"
             } else {
                 $status = "Deaktiviert"
@@ -41,66 +31,47 @@ function Show-LoggingStatus {
             Write-Host "`nAktueller Logging-Status: " -NoNewline
             Write-Host $status -ForegroundColor $color
             
-            # Zeige Logging-Pfad an, wenn aktiviert
-            if ($settings.Logging.Enabled) {
-                $loggingPath = Join-Path -Path $rootPath -ChildPath $settings.Logging.Path
-                Write-Host "Logs werden gespeichert unter: $loggingPath" -ForegroundColor Cyan
+            # Log-Pfad bei aktiviertem Logging anzeigen
+            if ($cfg.Logging.Enabled) {
+                Write-Host "Logs: $root\$($cfg.Logging.Path)" -ForegroundColor Cyan
             }
-        } catch {
-            Write-Host "Fehler beim Lesen der Einstellungen: $_" -ForegroundColor Red
-        }
+        } catch { Write-Host "Fehler beim Lesen: $_" -ForegroundColor Red }
     } else {
-        Write-Host "`nKeine Konfigurationsdatei gefunden. Logging ist standardmäßig deaktiviert." -ForegroundColor Yellow
+        Write-Host "`nKeine Konfigurationsdatei. Logging deaktiviert." -ForegroundColor Yellow
     }
 }
 
-# Funktion zum Deaktivieren des Loggings
-function Disable-Logging {
-    # Überprüfen, ob die Konfigurationsdatei existiert
-    if (Test-Path $settingsFile) {
+# Logging deaktivieren
+function DisableLog {
+    if (Test-Path $cfgFile) {
         try {
-            $settings = Get-Content -Path $settingsFile -Raw | ConvertFrom-Json
-            $settings.Logging.Enabled = $false
-            $settings | ConvertTo-Json -Depth 4 | Set-Content -Path $settingsFile
-            Write-Host "Logging wurde deaktiviert." -ForegroundColor Yellow
-            Write-Host "Die Änderung wird bei der nächsten Session wirksam." -ForegroundColor Cyan
-        } catch {
-            Write-Host "Fehler beim Aktualisieren der Einstellungen: $_" -ForegroundColor Red
-        }
+            $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
+            $cfg.Logging.Enabled = $false
+            $cfg | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
+            Write-Host "Logging deaktiviert." -ForegroundColor Yellow
+            Write-Host "Änderung bei nächster Session wirksam." -ForegroundColor Cyan
+        } catch { Write-Host "Fehler: $_" -ForegroundColor Red }
     } else {
-        Write-Host "Keine Konfigurationsdatei gefunden. Logging ist bereits deaktiviert." -ForegroundColor Yellow
+        Write-Host "Keine Konfigurationsdatei. Logging bereits deaktiviert." -ForegroundColor Yellow
     }
 }
 
-# Funktion zum Aktivieren des Loggings für PiM-Manager
-function Enable-PiMLogging {
-    Enable-LoggingWithMode "PiM"
-}
+# PiM-Logging aktivieren
+function EnablePiM { EnableLog "PiM" }
 
-# Funktion zum Aktivieren des Loggings für PowerShell
-function Enable-PowerShellLogging {
-    Enable-LoggingWithMode "PowerShell"
-}
+# PowerShell-Logging aktivieren
+function EnablePSH { EnableLog "PowerShell" }
 
-# Hilfsfunktion zum Aktivieren des Loggings mit bestimmtem Modus
-function Enable-LoggingWithMode {
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$Mode
-    )
+# Helper: Logging mit Modus aktivieren
+function EnableLog($Mode) {
+    # Konfigurationspfad prüfen/erstellen
+    if (-not (Test-Path $cfgPath)) { mkdir $cfgPath -Force >$null }
     
-    # Überprüfen, ob das Konfigurationsverzeichnis existiert
-    if (-not (Test-Path $configPath)) {
-        New-Item -ItemType Directory -Path $configPath -Force | Out-Null
-    }
-    
-    # Überprüfen, ob die Konfigurationsdatei existiert
-    if (Test-Path $settingsFile) {
-        try {
-            $settings = Get-Content -Path $settingsFile -Raw | ConvertFrom-Json
-        } catch {
-            # Wenn die Datei nicht als JSON gelesen werden kann, neue Einstellungen erstellen
-            $settings = [PSCustomObject]@{
+    # Konfiguration laden oder erstellen
+    if (Test-Path $cfgFile) {
+        try { $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json }
+        catch {
+            $cfg = [PSCustomObject]@{
                 Logging = [PSCustomObject]@{
                     Enabled = $false
                     Path = "docs\logs"
@@ -109,8 +80,7 @@ function Enable-LoggingWithMode {
             }
         }
     } else {
-        # Wenn die Datei nicht existiert, neue Einstellungen erstellen
-        $settings = [PSCustomObject]@{
+        $cfg = [PSCustomObject]@{
             Logging = [PSCustomObject]@{
                 Enabled = $false
                 Path = "docs\logs"
@@ -120,99 +90,88 @@ function Enable-LoggingWithMode {
     }
     
     # Logging aktivieren
-    $settings.Logging.Enabled = $true
+    $cfg.Logging.Enabled = $true
     
-    # Überprüfen, ob der Mode-Parameter existiert, und wenn nicht, hinzufügen
-    if (-not (Get-Member -InputObject $settings.Logging -Name "Mode" -MemberType Properties)) {
-        # Wenn das Mode-Property nicht existiert, fügen wir es hinzu
-        # PowerShell kann bestehende PSCustomObjects nicht direkt erweitern, also erstellen wir ein neues
-        $newLogging = [PSCustomObject]@{
-            Enabled = $settings.Logging.Enabled
-            Path = $settings.Logging.Path
+    # Mode-Parameter prüfen und setzen
+    if (-not (Get-Member -InputObject $cfg.Logging -Name "Mode" -MemberType Properties)) {
+        $newLog = [PSCustomObject]@{
+            Enabled = $cfg.Logging.Enabled
+            Path = $cfg.Logging.Path
             Mode = $Mode
         }
         
-        # Alte Logging-Eigenschaft entfernen und neue hinzufügen
-        $settingsObj = $settings | ConvertTo-Json -Depth 4 | ConvertFrom-Json
-        $settingsObj.Logging = $newLogging
-        $settings = $settingsObj
+        $cfgObj = $cfg | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+        $cfgObj.Logging = $newLog
+        $cfg = $cfgObj
     } else {
-        # Wenn das Property existiert, können wir es direkt setzen
-        $settings.Logging.Mode = $Mode
+        $cfg.Logging.Mode = $Mode
     }
     
-    # Einstellungen speichern
-    $settings | ConvertTo-Json -Depth 4 | Set-Content -Path $settingsFile
+    # Speichern
+    $cfg | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
     
-    # Logging-Verzeichnis erstellen, falls es nicht existiert
-    $loggingPath = Join-Path -Path $rootPath -ChildPath $settings.Logging.Path
-    if (-not (Test-Path $loggingPath)) {
-        New-Item -ItemType Directory -Path $loggingPath -Force | Out-Null
-        Write-Host "Logging-Verzeichnis erstellt: $loggingPath" -ForegroundColor Green
+    # Log-Verzeichnis erstellen
+    $logPath = "$root\$($cfg.Logging.Path)"
+    if (-not (Test-Path $logPath)) {
+        mkdir $logPath -Force >$null
+        Write-Host "Log-Verzeichnis erstellt: $logPath" -ForegroundColor Green
     }
     
-    $modeDisplay = if ($Mode -eq "PowerShell") { "PowerShell" } else { "PiM-Manager" }
-    Write-Host "Logging wurde aktiviert für: $modeDisplay" -ForegroundColor Green
-    Write-Host "Die Änderung wird bei der nächsten Session wirksam." -ForegroundColor Cyan
+    $modeText = $Mode -eq "PowerShell" ? "PowerShell" : "PiM-Manager"
+    Write-Host "Logging aktiviert für: $modeText" -ForegroundColor Green
+    Write-Host "Änderung bei nächster Session wirksam." -ForegroundColor Cyan
 }
 
-# Hauptmenü mit neuer UX-Modul-Integration
-function Show-LoggingMenu {
-    # Prüfen, ob die erweiterte UX-Modul-Funktion verfügbar ist
-    $useExtendedUX = Get-Command -Name Show-ScriptMenu -ErrorAction SilentlyContinue
+# Hauptmenü mit optimierter Implementierung
+function ShowMenu {
+    $hasUX = Get-Command Show-ScriptMenu -EA SilentlyContinue
     
-    # Menüoptionen für beide Darstellungsarten
-    $menuOptions = @{
+    # Menüoptionen
+    $menu = @{
         "1" = @{
-            "Display" = "[option]    Logging deaktivieren"
-            "Action" = { 
-                Disable-Logging
-                Show-LoggingStatus
-                Write-Host "`nDrücke eine Taste, um zum Menü zurückzukehren..."
-                [Console]::ReadKey($true) | Out-Null
-                Show-LoggingMenu
+            Display = "[option]    Logging deaktivieren"
+            Action = { 
+                DisableLog
+                ShowStatus
+                Write-Host "`nTaste drücken für Menü..."
+                [Console]::ReadKey($true) >$null
+                ShowMenu
             }
         }
         "2" = @{
-            "Display" = "[option]    Logging aktivieren - PiM-Manager"
-            "Action" = { 
-                Enable-PiMLogging
-                Show-LoggingStatus
-                Write-Host "`nDrücke eine Taste, um zum Menü zurückzukehren..."
-                [Console]::ReadKey($true) | Out-Null
-                Show-LoggingMenu
+            Display = "[option]    Logging aktivieren - PiM-Manager"
+            Action = { 
+                EnablePiM
+                ShowStatus
+                Write-Host "`nTaste drücken für Menü..."
+                [Console]::ReadKey($true) >$null
+                ShowMenu
             }
         }
         "3" = @{
-            "Display" = "[option]    Logging aktivieren - PowerShell"
-            "Action" = { 
-                Enable-PowerShellLogging
-                Show-LoggingStatus
-                Write-Host "`nDrücke eine Taste, um zum Menü zurückzukehren..."
-                [Console]::ReadKey($true) | Out-Null
-                Show-LoggingMenu
+            Display = "[option]    Logging aktivieren - PowerShell"
+            Action = { 
+                EnablePSH
+                ShowStatus
+                Write-Host "`nTaste drücken für Menü..."
+                [Console]::ReadKey($true) >$null
+                ShowMenu
             }
         }
     }
 
-    if ($useExtendedUX) {
-        # Nutze die neue erweiterte UX-Funktion
-        $result = Show-ScriptMenu -title "Logging-Manager" -mode "Admin-Modus" -options $menuOptions -enableBack -enableExit
+    if ($hasUX) {
+        # UX-Modul nutzen
+        $result = ShowScriptMenu -title "Logging-Manager" -mode "Admin-Modus" -options $menu -enableBack -enableExit
         
-        # Zurück-Button wurde gedrückt
-        if ($result -eq "B") {
-            return
-        }
-        # Exit-Button wurde gedrückt
-        elseif ($result -eq "X") {
-            exit
-        }
+        # Die ShowScriptMenu-Funktion beendet den Prozess bereits bei X 
+        # Wir müssen hier nur das Ergebnis B abfangen
+        if ($result -eq "B") { return }
     } else {
-        # Fallback zur alten Methode, nur mit modifizierter Anzeige
-        Clear-Host
+        # Fallback zur einfachen Methode
+        cls
         
-        # Versuche, zumindest die Titel-Funktion zu verwenden, wenn vorhanden
-        if (Get-Command -Name Show-Title -ErrorAction SilentlyContinue) {
+        if (Get-Command Show-Title -EA SilentlyContinue) {
             Show-Title "Logging-Manager" "Admin-Modus"
         } else {
             Write-Host "+===============================================+"
@@ -220,37 +179,35 @@ function Show-LoggingMenu {
             Write-Host "+===============================================+"
         }
         
-        # Status anzeigen
-        Show-LoggingStatus
+        ShowStatus
         Write-Host ""
         
-        # Menüoptionen anzeigen
-        foreach ($key in ($menuOptions.Keys | Sort-Object)) {
-            Write-Host "    $key       $($menuOptions[$key].Display)"
+        # Optionen anzeigen
+        foreach ($key in ($menu.Keys | Sort-Object)) {
+            Write-Host "    $key       $($menu[$key].Display)"
         }
         
-        # Leerzeile vor Navigationsoptionen
         Write-Host ""
         Write-Host "    B       [back]      Zurück"
         Write-Host "    X       [exit]      Beenden"
         
-        # Benutzereingabe
         Write-Host ""
-        $choice = Read-Host "Wähle eine Option"
+        $choice = Read-Host "Option wählen"
         
-        if ($menuOptions.ContainsKey($choice)) {
-            & $menuOptions[$choice].Action
+        if ($choice -match "^[Xx]$") {
+            Write-Host "PiM-Manager wird beendet..." -ForegroundColor Yellow
+            exit
         } elseif ($choice -match "^[Bb]$") {
             return
-        } elseif ($choice -match "^[Xx]$") {
-            exit
+        } elseif ($menu.ContainsKey($choice)) {
+            & $menu[$choice].Action
         } else {
-            Write-Host "Ungültige Option. Bitte erneut versuchen." -ForegroundColor Red
+            Write-Host "Ungültige Option." -ForegroundColor Red
             Start-Sleep -Seconds 2
-            Show-LoggingMenu
+            ShowMenu
         }
     }
 }
 
 # Menü starten
-Show-LoggingMenu
+ShowMenu
