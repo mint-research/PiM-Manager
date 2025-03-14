@@ -1,231 +1,71 @@
-# cleanup-pim.ps1 - Bereinigung temporärer Dateien im PiM-Manager
-# Speicherort: scripts\admin\Cleanup\
-# Version: 1.0
-# DisplayName: Temporäre Dateien bereinigen
-
-function PerformCleanup($selectedFolders, $cutoffDate) {
-    if ($selectedFolders.Count -eq 0 -or $null -eq $cutoffDate) {
-        Log "Keine Bereinigung durchgeführt" "Warning"
-        return
-    }
-    
-    Log "Beginne Bereinigung..." "Info"
-    $totalDeleted = 0
-    $totalSize = 0
-    
-    # Debug-Info: Zeige Cutoff-Datum an, um Zeitvergleich nachzuvollziehen
-    Log "Cutoff-Datum für Löschung: $($cutoffDate.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
-    
-    foreach ($folder in $selectedFolders) {
-        $folderPath = "$tempPath\$folder"
-        
-        if (-not (Test-Path $folderPath)) {
-            Log "Verzeichnis nicht gefunden: $folderPath" "Warning"
-            continue
-        }
-        
-        Log "Suche zu löschende Dateien in: $folder" "Info"
-        
-        # Alle Dateien auflisten und Debug-Info ausgeben
-        $allFiles = Get-ChildItem $folderPath -Recurse -File
-        Log "Gesamt Dateien gefunden: $($allFiles.Count)" "Info"
-        
-        if ($allFiles.Count -gt 0) {
-            $oldestFile = $allFiles | Sort-Object LastWriteTime | Select-Object -First 1
-            $newestFile = $allFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            
-            Log "Älteste Datei: $($oldestFile.Name) - $($oldestFile.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
-            Log "Neueste Datei: $($newestFile.Name) - $($newestFile.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
-        }
-        
-        # Spezialfall für Backups: Wenn im Backup-Ordner und Option "Alle" gewählt,
-        # dann komplette Backup-Verzeichnisse löschen anstatt nur einzelne Dateien
-        if ($folder -eq "backups" -and $cutoffDate -eq [DateTime]::MinValue) {
-            $backupFolders = Get-ChildItem $folderPath -Directory
-            $folderFiles = $allFiles.Count  # Für die Berichterstattung
-            $folderSize = ($allFiles | Measure-Object -Property Length -Sum).Sum
-            
-            Log "Löschung von Backup-Ordnern: $($backupFolders.Count) Ordner" "Info"
-            
-            # Fortschritt für Backup-Ordner
-            $progress = 0
-            $activity = "Bereinige Backup-Ordner"
-            
-            foreach ($backupFolder in $backupFolders) {
-                try {
-                    Log "Lösche Backup-Ordner: $($backupFolder.FullName)" "Info"
-                    Remove-Item $backupFolder.FullName -Recurse -Force
-                    
-                    # Fortschritt anzeigen
-                    $progress++
-                    $percent = [math]::Round(($progress / $backupFolders.Count) * 100)
-                    Write-Progress -Activity $activity -Status "$percent% abgeschlossen" -PercentComplete $percent
-                }
-                catch {
-                    Log "Fehler beim Löschen des Backup-Ordners: $($backupFolder.FullName) - $_" "Error"
-                }
-            }
-            
-            Write-Progress -Activity $activity -Completed
-            $totalDeleted += $folderFiles
-            $totalSize += $folderSize
-        }
-        else {
-            # Standardverhalten für andere Ordner: Dateien für Löschung auswählen
-            $filesToDelete = if ($cutoffDate -eq [DateTime]::MinValue) {
-                # Bei 'Alle' auswählen einfach alle Dateien zurückgeben
-                $allFiles
-            } else {
-                # Sonst normal nach Datum filtern
-                $allFiles | Where-Object { $_.LastWriteTime -le $cutoffDate }
-            }
-            
-            $folderFiles = $filesToDelete.Count
-            Log "Zum Löschen markierte Dateien: $folderFiles" "Info"
-            
-            if ($folderFiles -eq 0) {
-                Log "Keine zu löschenden Dateien in: $folder" "Info"
-                continue
-            }
-            
-            # Größe berechnen
-            $folderSize = ($filesToDelete | Measure-Object -Property Length -Sum).Sum
-            $totalSize += $folderSize
-            
-            # Lösch-Fortschritt
-            $progress = 0
-            $activity = "Bereinige $folder"
-            
-            foreach ($file in $filesToDelete) {
-                try {
-                    # Ignoriere Dateien, die gerade in Benutzung sind (z.B. aktuelle Logs)
-                    $inUse = $false
-                    try {
-                        $fileStream = [System.IO.File]::Open($file.FullName, 
-                                      [System.IO.FileMode]::Open, 
-                                      [System.IO.FileAccess]::ReadWrite, 
-                                      [System.IO.FileShare]::None)
-                        $fileStream.Close()
-                        $fileStream.Dispose()
-                    }
-                    catch {
-                        $inUse = $true
-                        Log "Datei in Benutzung, wird übersprungen: $($file.FullName)" "Warning"
-                    }
-                    
-                    if (-not $inUse) {
-                        Remove-Item $file.FullName -Force
-                        $totalDeleted++
-                    }
-                    
-                    # Fortschritt anzeigen
-                    $progress++
-                    $percent = [math]::Round(($progress / $folderFiles) * 100)
-                    Write-Progress -Activity $activity -Status "$percent% abgeschlossen" -PercentComplete $percent
-                }
-                catch {
-                    Log "Fehler beim Löschen: $($file.FullName) - $_" "Error"
-                }
-            }
-            
-            Write-Progress -Activity $activity -Completed
-            
-            # Leere Verzeichnisse entfernen (falls keine Dateien oder Unterverzeichnisse)
-            Get-ChildItem $folderPath -Directory -Recurse | 
-                Where-Object { 
-                    (Get-ChildItem $_.FullName -Recurse -File).Count -eq 0 -and
-                    (Get-ChildItem $_.FullName -Directory).Count -eq 0
-                } |
-                ForEach-Object {
-                    try {
-                        Log "Entferne leeres Verzeichnis: $($_.FullName)" "Info"
-                        Remove-Item $_.FullName -Force
-                    }
-                    catch {
-                        Log "Fehler beim Entfernen des Verzeichnisses: $($_.FullName) - $_" "Error"
-                    }
-                }
-        }
-        
-        # Ausgabe pro Ordner
-        $sizeInMB = [math]::Round($folderSize / 1MB, 2)
-        Log "Bereinigt in '$folder': $folderFiles Dateien ($sizeInMB MB)" "Info"
-    }
-    
-    # Ergebnisanzeige mit konsistenter Formatierung
-    cls
-    $hasUX = Get-Command ShowTitle -EA SilentlyContinue
-    if ($# cleanup-pim.ps1 - Bereinigung temporärer Dateien im PiM-Manager
+# cleanup-pim.ps1 - Temp-Dateien bereinigen (Tokenoptimiert)
 # Speicherort: scripts\admin\Cleanup\
 # Version: 1.0
 # DisplayName: Temporäre Dateien bereinigen
 
 <#
 .SYNOPSIS
-Bereinigt temporäre Dateien und Verzeichnisse des PiM-Managers.
-
-.DESCRIPTION
-Dieses Skript durchsucht den temp-Ordner des PiM-Managers und bietet
-die Möglichkeit, verschiedene Dateitypen (basierend auf Unterordnern)
-und Zeitspannen für die Bereinigung auszuwählen.
-
-.NOTES
-Datum: 2025-03-14
+Bereinigt temporäre Dateien des PiM-Managers.
 #>
 
-# Pfadberechnung (drei Ebenen nach oben von scripts\admin\Cleanup)
-$root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+# Pfadberechnung (3 Ebenen hoch für admin\Cleanup)
+$root = $PSScriptRoot -match "admin\\Cleanup$" ? 
+    (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) : 
+    (Split-Path -Parent $PSScriptRoot)
 $tempPath = "$root\temp"
+$isAdmin = $true
 
 # UX-Modul laden
 $modPath = "$root\modules\ux.psm1"
 if (Test-Path $modPath) {
     try { Import-Module $modPath -Force -EA Stop }
-    catch { Write-Host "UX-Modul-Fehler: $_" -ForegroundColor Red }
+    catch { Write-Host "UX-Fehler: $_" -ForegroundColor Red }
 }
 
-# Logging-Funktion
+# Log-Funktion
 function Log($m, $t = "Info") {
-    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $script = Split-Path -Leaf $PSCommandPath
-    $logLine = "[$ts] [$script] [$t] $m"
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    $s = Split-Path -Leaf $PSCommandPath
+    $l = "[$ts] [$s] [$t] $m"
     
     switch ($t) {
-        "Error" { Write-Host $logLine -ForegroundColor Red }
-        "Warning" { Write-Host $logLine -ForegroundColor Yellow }
-        default { Write-Host $logLine -ForegroundColor Gray }
+        "Error" { Write-Host $l -ForegroundColor Red }
+        "Warning" { Write-Host $l -ForegroundColor Yellow }
+        default { Write-Host $l -ForegroundColor Gray }
     }
 }
 
-# Dateitypen (Unterordner) im temp-Verzeichnis ermitteln
-function GetTempSubfolders {
-    if (-not (Test-Path $tempPath)) {
-        Log "Temp-Verzeichnis nicht gefunden: $tempPath" "Warning"
-        return @()
-    }
-    
-    $folders = Get-ChildItem $tempPath -Directory | Select-Object -ExpandProperty Name
-    return $folders
+# Unterordner im temp-Verzeichnis ermitteln
+function GetDirs {
+    if (!(Test-Path $tempPath)) { return @() }
+    Get-ChildItem $tempPath -Directory | Select-Object -ExpandProperty Name
 }
 
-# Verfügbare Dateitypen zur Auswahl anbieten
-function SelectFileTypes {
-    $folders = GetTempSubfolders
+# Dateitypen auswählen
+function SelTypes {
+    $dirs = GetDirs
     
-    if ($folders.Count -eq 0) {
-        Log "Keine Unterordner im temp-Verzeichnis gefunden" "Warning"
-        return @()
+    # Wenn keine Verzeichnisse vorhanden sind, aber temp-Verzeichnis existiert
+    if ($dirs.Count -eq 0 && (Test-Path $tempPath)) { 
+        Log "Keine Ordner im temp-Verzeichnis" "Warning"
+        Write-Host "`nEs sind keine Unterordner im temp-Verzeichnis vorhanden." -ForegroundColor Yellow
+        Write-Host "Diese werden automatisch erstellt, wenn sie benötigt werden." -ForegroundColor Cyan
+        
+        # Navigation
+        Write-Host ""
+        Write-Host "    B       [back]      Zurück"
+        Write-Host ""
+        Read-Host "Option wählen"
+        
+        return "B"
     }
     
-    $selections = @()
-    
+    $sel = @()
     cls
-    $hasUX = Get-Command ShowTitle -EA SilentlyContinue
-    if ($hasUX) {
-        try {
-            ShowTitle "Dateitypen auswählen" "Admin-Modus"
-        } catch {
-            Log "Fehler bei Titelanzeige: $_" "Warning"
+    
+    if (Get-Command ShowTitle -EA SilentlyContinue) {
+        try { ShowTitle "Dateitypen auswählen" "Admin-Modus" }
+        catch {
             Write-Host "+===============================================+"
             Write-Host "|            Dateitypen auswählen              |"
             Write-Host "|             (Admin-Modus)                    |"
@@ -238,66 +78,58 @@ function SelectFileTypes {
         Write-Host "+===============================================+"
     }
     
-    # Klare Überschrift
+    # Liste der Ordner
     Write-Host ""
     Write-Host "Verfügbare Dateitypen zum Bereinigen:" -ForegroundColor Cyan 
     Write-Host ""
     
-    # Nummerierte Liste erstellen - mit konsistenter Formatierung (4 Leerzeichen)
-    for ($i = 0; $i -lt $folders.Count; $i++) {
-        $folderName = $folders[$i]
-        $itemCount = (Get-ChildItem "$tempPath\$folderName" -Recurse -File -ErrorAction SilentlyContinue).Count
-        Write-Host "    $($i+1)       [folder]    $folderName - $itemCount Dateien"
+    for ($i = 0; $i -lt $dirs.Count; $i++) {
+        $d = $dirs[$i]
+        $cnt = (Get-ChildItem "$tempPath\$d" -Recurse -File -EA SilentlyContinue).Count
+        Write-Host "    $($i+1)       [folder]    $d - $cnt Dateien"
     }
     
-    # Navigation (konsistent mit PiM-Manager-Format)
+    # Navigation
     Write-Host ""
     Write-Host "    A       [all]       Alle auswählen"
     Write-Host "    B       [back]      Zurück"
     
-    # Eingabe mit klarer Aufforderung
+    # Eingabe
     Write-Host ""
     $choice = Read-Host "Option wählen oder Nummern durch Komma getrennt (z.B. '1,3')"
     
-    # "B" als explizite Option für "Zurück"
     if ($choice -match "^[Bb]$") {
-        Log "Benutzer hat Auswahl abgebrochen" "Info"
-        return "B"  # Spezielle Markierung für "Zurück"
+        Log "Auswahl abgebrochen" "Info"
+        return "B"
     }
     
     if ([string]::IsNullOrWhiteSpace($choice)) {
-        # Leere Eingabe - zurück zum Menü
-        Log "Keine Eingabe - Zurück zum Hauptmenü" "Info"
+        Log "Keine Eingabe - Zurück" "Info"
         return "B"
     }
     
     if ($choice -match "^[Aa]$") {
-        # Alle auswählen
-        Log "Benutzer hat alle Dateitypen ausgewählt" "Info"
-        return $folders
+        Log "Alle Typen ausgewählt" "Info"
+        return $dirs
     }
     
-    # Mehrfachauswahl verarbeiten
-    $selectedIndices = $choice -split ',' | ForEach-Object { $_.Trim() }
-    
-    foreach ($index in $selectedIndices) {
-        if ($index -match "^\d+$") {
-            $i = [int]$index - 1
-            if ($i -ge 0 -and $i -lt $folders.Count) {
-                $selections += $folders[$i]
-                Log "Dateityp ausgewählt: $($folders[$i])" "Info"
-            }
+    # Mehrfachauswahl
+    $choice -split ',' | % { $_.Trim() } | ? { $_ -match "^\d+$" } | % {
+        $i = [int]$_ - 1
+        if ($i -ge 0 -and $i -lt $dirs.Count) {
+            $sel += $dirs[$i]
+            Log "Typ ausgewählt: $($dirs[$i])" "Info"
         }
     }
     
-    return $selections
+    return $sel
 }
 
-# Zeitspanne zur Auswahl anbieten
-function SelectTimeframe {
+# Zeitraum auswählen
+function SelTime {
     cls
-    $hasUX = Get-Command ShowTitle -EA SilentlyContinue
-    if ($hasUX) {
+    
+    if (Get-Command ShowTitle -EA SilentlyContinue) {
         ShowTitle "Zeitraum auswählen" "Admin-Modus"
     } else {
         Write-Host "+===============================================+"
@@ -312,188 +144,178 @@ function SelectTimeframe {
     Write-Host "    3       [option]    Aus der letzten Woche"
     Write-Host "    4       [option]    Alle"
     
-    # Navigation (konsistent mit PiM-Manager-Format)
+    # Navigation
     Write-Host ""
     Write-Host "    B       [back]      Zurück"
     
     Write-Host ""
-    $choice = Read-Host "Option wählen"
+    $c = Read-Host "Option wählen"
     
-    # Konsistentes Zurück-Verhalten
-    if ($choice -match "^[Bb]$") {
-        Log "Benutzer hat Zurück gewählt" "Info"
+    if ($c -match "^[Bb]$") {
+        Log "Zurück gewählt" "Info"
         return $null
     }
     
-    # WICHTIG: Bei der Option "Alle" geben wir jetzt das aktuelle Datum zurück
-    # damit der Vergleich mit -le (less or equal) alle Dateien einschließt
-    switch ($choice) {
+    switch ($c) {
         "1" { return (Get-Date).AddHours(-1) }
         "2" { return (Get-Date).AddHours(-24) }
         "3" { return (Get-Date).AddDays(-7) }
-        "4" { return [DateTime]::MinValue } # Bleibt für "Alle" bei MinValue
+        "4" { return [DateTime]::MinValue }
         default { 
             Write-Host "`nUngültige Eingabe." -ForegroundColor Red 
             Start-Sleep -Seconds 2
-            return SelectTimeframe  # Erneut versuchen
+            return SelTime
         }
     }
 }
 
-# Bereinigung durchführen
-function PerformCleanup($selectedFolders, $cutoffDate) {
-    if ($selectedFolders.Count -eq 0 -or $null -eq $cutoffDate) {
+# Bereinigen
+function DoCleanup($dirs, $cutoffDate) {
+    if ($dirs.Count -eq 0 -or $null -eq $cutoffDate) {
         Log "Keine Bereinigung durchgeführt" "Warning"
         return
     }
     
     Log "Beginne Bereinigung..." "Info"
-    $totalDeleted = 0
+    $totalFiles = 0
     $totalSize = 0
     
-    # Debug-Info: Zeige Cutoff-Datum an, um Zeitvergleich nachzuvollziehen
-    Log "Cutoff-Datum für Löschung: $($cutoffDate.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
+    Log "Cutoff-Datum: $($cutoffDate.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
     
-    foreach ($folder in $selectedFolders) {
-        $folderPath = "$tempPath\$folder"
+    foreach ($d in $dirs) {
+        $path = "$tempPath\$d"
         
-        if (-not (Test-Path $folderPath)) {
-            Log "Verzeichnis nicht gefunden: $folderPath" "Warning"
+        if (!(Test-Path $path)) {
+            Log "Ordner nicht gefunden: $path" "Warning"
             continue
         }
         
-        Log "Suche zu löschende Dateien in: $folder" "Info"
+        Log "Prüfe: $d" "Info"
         
-        # Alle Dateien auflisten und Debug-Info ausgeben
-        $allFiles = Get-ChildItem $folderPath -Recurse -File
-        Log "Gesamt Dateien gefunden: $($allFiles.Count)" "Info"
+        # Dateien auflisten
+        $files = Get-ChildItem $path -Recurse -File
+        Log "Dateien: $($files.Count)" "Info"
         
-        if ($allFiles.Count -gt 0) {
-            $oldestFile = $allFiles | Sort-Object LastWriteTime | Select-Object -First 1
-            $newestFile = $allFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($files.Count -gt 0) {
+            $oldest = $files | Sort-Object LastWriteTime | Select-Object -First 1
+            $newest = $files | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             
-            Log "Älteste Datei: $($oldestFile.Name) - $($oldestFile.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
-            Log "Neueste Datei: $($newestFile.Name) - $($newestFile.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
+            Log "Älteste: $($oldest.Name) - $($oldest.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
+            Log "Neueste: $($newest.Name) - $($newest.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))" "Info"
         }
         
-        # Spezialfall für Backups: Wenn im Backup-Ordner und Option "Alle" gewählt,
-        # dann komplette Backup-Verzeichnisse löschen anstatt nur einzelne Dateien
-        if ($folder -eq "backups" -and $cutoffDate -eq [DateTime]::MinValue) {
-            $backupFolders = Get-ChildItem $folderPath -Directory
-            $folderFiles = $allFiles.Count  # Für die Berichterstattung
-            $folderSize = ($allFiles | Measure-Object -Property Length -Sum).Sum
+        # Spezialfall für Backups
+        if ($d -eq "backups" -and $cutoffDate -eq [DateTime]::MinValue) {
+            $bkpDirs = Get-ChildItem $path -Directory
+            $fCount = $files.Count  # Für Bericht
+            $fSize = ($files | Measure-Object -Property Length -Sum).Sum
             
-            Log "Löschung von Backup-Ordnern: $($backupFolders.Count) Ordner" "Info"
+            Log "Backup-Ordner: $($bkpDirs.Count)" "Info"
             
-            # Fortschritt für Backup-Ordner
-            $progress = 0
-            $activity = "Bereinige Backup-Ordner"
+            # Fortschritt
+            $prog = 0
+            $act = "Bereinige Backup-Ordner"
             
-            foreach ($backupFolder in $backupFolders) {
+            foreach ($bkp in $bkpDirs) {
                 try {
-                    Log "Lösche Backup-Ordner: $($backupFolder.FullName)" "Info"
-                    Remove-Item $backupFolder.FullName -Recurse -Force
+                    Log "Lösche: $($bkp.FullName)" "Info"
+                    Remove-Item $bkp.FullName -Recurse -Force
                     
-                    # Fortschritt anzeigen
-                    $progress++
-                    $percent = [math]::Round(($progress / $backupFolders.Count) * 100)
-                    Write-Progress -Activity $activity -Status "$percent% abgeschlossen" -PercentComplete $percent
+                    # Fortschritt
+                    $prog++
+                    $pct = [math]::Round(($prog / $bkpDirs.Count) * 100)
+                    Write-Progress -Activity $act -Status "$pct% abgeschlossen" -PercentComplete $pct
                 }
                 catch {
-                    Log "Fehler beim Löschen des Backup-Ordners: $($backupFolder.FullName) - $_" "Error"
+                    Log "Fehler: $($bkp.FullName) - $_" "Error"
                 }
             }
             
-            Write-Progress -Activity $activity -Completed
-            $totalDeleted += $folderFiles
-            $totalSize += $folderSize
+            Write-Progress -Activity $act -Completed
+            $totalFiles += $fCount
+            $totalSize += $fSize
         }
         else {
-            # Standardverhalten für andere Ordner: Dateien für Löschung auswählen
-            $filesToDelete = if ($cutoffDate -eq [DateTime]::MinValue) {
-                # Bei 'Alle' auswählen einfach alle Dateien zurückgeben
-                $allFiles
-            } else {
-                # Sonst normal nach Datum filtern
-                $allFiles | Where-Object { $_.LastWriteTime -le $cutoffDate }
-            }
+            # Normale Ordner
+            $toDel = $cutoffDate -eq [DateTime]::MinValue ?
+                $files :
+                ($files | ? { $_.LastWriteTime -le $cutoffDate })
             
-            $folderFiles = $filesToDelete.Count
-            Log "Zum Löschen markierte Dateien: $folderFiles" "Info"
+            $fCount = $toDel.Count
+            Log "Zu löschen: $fCount" "Info"
             
-            if ($folderFiles -eq 0) {
-                Log "Keine zu löschenden Dateien in: $folder" "Info"
+            if ($fCount -eq 0) {
+                Log "Keine zu löschenden Dateien in: $d" "Info"
                 continue
             }
             
-            # Größe berechnen
-            $folderSize = ($filesToDelete | Measure-Object -Property Length -Sum).Sum
-            $totalSize += $folderSize
+            # Größe
+            $fSize = ($toDel | Measure-Object -Property Length -Sum).Sum
+            $totalSize += $fSize
             
             # Lösch-Fortschritt
-            $progress = 0
-            $activity = "Bereinige $folder"
+            $prog = 0
+            $act = "Bereinige $d"
             
-            foreach ($file in $filesToDelete) {
+            foreach ($f in $toDel) {
                 try {
-                    # Ignoriere Dateien, die gerade in Benutzung sind (z.B. aktuelle Logs)
-                    $inUse = $false
+                    # Prüfe Dateizugriff
+                    $skip = $false
                     try {
-                        $fileStream = [System.IO.File]::Open($file.FullName, 
-                                      [System.IO.FileMode]::Open, 
-                                      [System.IO.FileAccess]::ReadWrite, 
-                                      [System.IO.FileShare]::None)
-                        $fileStream.Close()
-                        $fileStream.Dispose()
+                        $fs = [System.IO.File]::Open($f.FullName, 
+                              [System.IO.FileMode]::Open, 
+                              [System.IO.FileAccess]::ReadWrite, 
+                              [System.IO.FileShare]::None)
+                        $fs.Close()
+                        $fs.Dispose()
                     }
                     catch {
-                        $inUse = $true
-                        Log "Datei in Benutzung, wird übersprungen: $($file.FullName)" "Warning"
+                        $skip = $true
+                        Log "In Benutzung: $($f.FullName)" "Warning"
                     }
                     
-                    if (-not $inUse) {
-                        Remove-Item $file.FullName -Force
-                        $totalDeleted++
+                    if (!$skip) {
+                        Remove-Item $f.FullName -Force
+                        $totalFiles++
                     }
                     
-                    # Fortschritt anzeigen
-                    $progress++
-                    $percent = [math]::Round(($progress / $folderFiles) * 100)
-                    Write-Progress -Activity $activity -Status "$percent% abgeschlossen" -PercentComplete $percent
+                    # Fortschritt
+                    $prog++
+                    $pct = [math]::Round(($prog / $fCount) * 100)
+                    Write-Progress -Activity $act -Status "$pct% abgeschlossen" -PercentComplete $pct
                 }
                 catch {
-                    Log "Fehler beim Löschen: $($file.FullName) - $_" "Error"
+                    Log "Fehler: $($f.FullName) - $_" "Error"
                 }
             }
             
-            Write-Progress -Activity $activity -Completed
+            Write-Progress -Activity $act -Completed
             
-            # Leere Verzeichnisse entfernen (falls keine Dateien oder Unterverzeichnisse)
-            Get-ChildItem $folderPath -Directory -Recurse | 
-                Where-Object { 
+            # Leere Ordner entfernen
+            Get-ChildItem $path -Directory -Recurse | 
+                ? { 
                     (Get-ChildItem $_.FullName -Recurse -File).Count -eq 0 -and
                     (Get-ChildItem $_.FullName -Directory).Count -eq 0
-                } |
-                ForEach-Object {
+                } | % {
                     try {
-                        Log "Entferne leeres Verzeichnis: $($_.FullName)" "Info"
+                        Log "Entferne leeren Ordner: $($_.FullName)" "Info"
                         Remove-Item $_.FullName -Force
                     }
                     catch {
-                        Log "Fehler beim Entfernen des Verzeichnisses: $($_.FullName) - $_" "Error"
+                        Log "Fehler: $($_.FullName) - $_" "Error"
                     }
                 }
         }
         
         # Ausgabe pro Ordner
-        $sizeInMB = [math]::Round($folderSize / 1MB, 2)
-        Log "Bereinigt in '$folder': $folderFiles Dateien ($sizeInMB MB)" "Info"
+        $mb = [math]::Round($fSize / 1MB, 2)
+        Log "Bereinigt '$d': $fCount Dateien ($mb MB)" "Info"
     }
     
-    # Ergebnisanzeige mit konsistenter Formatierung
+    # Ergebnisanzeige
     cls
-    $hasUX = Get-Command ShowTitle -EA SilentlyContinue
-    if ($hasUX) {
+    
+    if (Get-Command ShowTitle -EA SilentlyContinue) {
         ShowTitle "Bereinigung abgeschlossen" "Admin-Modus"
     } else {
         Write-Host "+===============================================+"
@@ -503,107 +325,168 @@ function PerformCleanup($selectedFolders, $cutoffDate) {
     }
     
     # Gesamtausgabe
-    $totalSizeInMB = [math]::Round($totalSize / 1MB, 2)
+    $totalMB = [math]::Round($totalSize / 1MB, 2)
     Log "Bereinigung abgeschlossen:" "Info"
     
     Write-Host "`nErgebnis der Bereinigung:" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "    Gelöschte Dateien:         $totalDeleted"
-    Write-Host "    Freigegebener Speicherplatz: $totalSizeInMB MB"
-    
-    # Konsistentes UX mit Zurück-Option
-    Write-Host ""
-    Write-Host "    B       [back]      Zurück"
-    Write-Host ""
-    $choice = Read-Host "Option wählen"
-    
-    # Zurück zum Hauptmenü ohne ShowMainMenu-Aufruf
-    # Die Rückkehr zum Startmenü wird von der aufrufenden Funktion übernommen
-    return
-}
-
-# Hauptmenü anzeigen
-function ShowMainMenu {
-    # UX-Funktion prüfen
-    $hasUX = Get-Command ShowScriptMenu -EA SilentlyContinue
-    
-    # Menüoptionen
-    $opts = @{
-        "1" = @{
-            Display = "[option]    Temporäre Dateien bereinigen"
-            Action = { StartCleanup }
-        }
-        "2" = @{
-            Display = "[option]    Statistik anzeigen"
-            Action = { ShowStatistics }
-        }
-    }
-    
-    if ($hasUX) {
-        # UX-Modul nutzen
-        try {
-            $result = ShowScriptMenu -title "PiM-Bereinigung" -mode "Admin-Modus" -options $opts -enableBack -enableExit
-            
-            # Die Funktion sollte ein "B" zurückgeben, wenn der Benutzer zurück möchte
-            if ($result -eq "B") {
-                return
-            }
-        }
-        catch {
-            Log "Fehler bei Menüanzeige: $_" "Error"
-            # Fallback zur einfachen Methode, wenn etwas schiefgeht
-            FallbackMenu $opts
-        }
-    } else {
-        # Fallback-Menü
-        FallbackMenu $opts
-    }
-}
-
-# Fallback-Menü für den Fall, dass UX-Modul nicht verfügbar oder fehlerhaft ist
-function FallbackMenu($options) {
-    cls
-    Write-Host "+===============================================+"
-    Write-Host "|             PiM-Bereinigung                  |"
-    Write-Host "|             (Admin-Modus)                    |"
-    Write-Host "+===============================================+"
-    
-    # Optionen anzeigen
-    foreach ($key in ($options.Keys | Sort-Object)) {
-        Write-Host "    $key       $($options[$key].Display)"
-    }
+    Write-Host "    Gelöschte Dateien:         $totalFiles"
+    Write-Host "    Freigegebener Speicherplatz: $totalMB MB"
     
     # Navigation
     Write-Host ""
     Write-Host "    B       [back]      Zurück"
-    Write-Host "    X       [exit]      Beenden"
-    
-    # Eingabe
     Write-Host ""
-    $choice = Read-Host "Option wählen"
+    Read-Host "Option wählen"
     
-    if ($choice -match "^[Xx]$") {
-        # Statt exit nutzen wir return, um sauberes Beenden zu ermöglichen
-        # Der Aufrufstack kümmert sich dann um den Rest
-        Log "Beende Skript auf Benutzerwunsch" "Info"
-        return
-    } elseif ($choice -match "^[Bb]$") {
-        return
-    } elseif ($options.ContainsKey($choice)) {
-        & $options[$choice].Action
+    return
+}
+
+# Statistik anzeigen
+function ShowStats {
+    cls
+    
+    if (Get-Command ShowTitle -EA SilentlyContinue) {
+        ShowTitle "Temp-Statistik" "Admin-Modus"
     } else {
-        Write-Host "Ungültige Option." -ForegroundColor Red
-        Start-Sleep -Seconds 2
-        FallbackMenu $options
+        Write-Host "+===============================================+"
+        Write-Host "|             Temp-Statistik                   |"
+        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "+===============================================+"
     }
+    
+    # Temp-Ordner prüfen
+    if (!(Test-Path $tempPath)) {
+        Log "Temp-Verzeichnis nicht gefunden: $tempPath" "Warning"
+        mkdir $tempPath -Force >$null
+        Log "Temp-Verzeichnis erstellt: $tempPath" "Info"
+        
+        Write-Host "`nKeine temporären Dateien zum Analysieren." -ForegroundColor Yellow
+        
+        # Navigation
+        Write-Host ""
+        Write-Host "    B       [back]      Zurück"
+        Write-Host ""
+        Read-Host "Option wählen"
+        
+        return
+    }
+    
+    $dirs = GetDirs
+    
+    if ($dirs.Count -eq 0) {
+        Write-Host "`nKeine Unterordner im temp-Verzeichnis." -ForegroundColor Yellow
+        
+        # Navigation
+        Write-Host ""
+        Write-Host "    B       [back]      Zurück"
+        Write-Host ""
+        Read-Host "Option wählen"
+        
+        return
+    }
+    
+    Write-Host "`nStatistik der temporären Dateien:" -ForegroundColor Cyan
+    
+    $totalFiles = 0
+    $totalSize = 0
+    
+    # Tabellenkopf
+    Write-Host "`n  Ordner                    Dateien        Größe        Älteste Datei"
+    Write-Host "  --------------------------------------------------------------------"
+    
+    foreach ($d in $dirs) {
+        $path = "$tempPath\$d"
+        
+        if (!(Test-Path $path)) { continue }
+        
+        $files = Get-ChildItem $path -Recurse -File
+        $cnt = $files.Count
+        $totalFiles += $cnt
+        
+        $size = ($files | Measure-Object -Property Length -Sum).Sum
+        $totalSize += $size
+        $mb = [math]::Round($size / 1MB, 2)
+        
+        # Älteste Datei
+        $oldest = $files | Sort-Object LastWriteTime | Select-Object -First 1
+        $oldDate = $oldest ? $oldest.LastWriteTime.ToString("yyyy-MM-dd") : "N/A"
+        
+        # Ausgabe
+        Write-Host ("  {0,-25} {1,7} {2,12} MB   {3,-10}" -f $d, $cnt, $mb, $oldDate)
+    }
+    
+    # Gesamtstatistik
+    $totalMB = [math]::Round($totalSize / 1MB, 2)
+    Write-Host "  --------------------------------------------------------------------"
+    Write-Host ("  {0,-25} {1,7} {2,12} MB" -f "Gesamt:", $totalFiles, $totalMB)
+    
+    # Navigation
+    Write-Host ""
+    Write-Host "    B       [back]      Zurück"
+    Write-Host ""
+    Read-Host "Option wählen"
+    
+    # Zurück zum Hauptmenü
+    StartCleanup
 }
 
 # Bereinigungsprozess starten
+function CleanFiles {
+    # Temp-Verzeichnis prüfen
+    if (!(Test-Path $tempPath)) {
+        Log "Temp-Verzeichnis nicht gefunden: $tempPath" "Error"
+        mkdir $tempPath -Force >$null
+        Log "Temp-Verzeichnis erstellt: $tempPath" "Info"
+        
+        Write-Host "`nKeine temporären Dateien zum Bereinigen." -ForegroundColor Yellow
+        Write-Host "`nTaste drücken..."
+        [Console]::ReadKey($true) >$null
+        StartCleanup
+        return
+    }
+    
+    # Keine automatische Erstellung der Standardordner hier
+    # Die Ordner werden erst erstellt, wenn sie benötigt werden
+    # (wenn ein Backup oder Log erstellt wird)
+    
+    # Dateitypen auswählen
+    $dirs = SelTypes
+    
+    # Zurück-Signal prüfen
+    if ($dirs -eq "B") {
+        Log "Zurück zum Hauptmenü" "Info"
+        StartCleanup
+        return
+    }
+    
+    if ($dirs.Count -eq 0) {
+        Log "Keine Dateitypen ausgewählt" "Warning"
+        StartCleanup
+        return
+    }
+    
+    # Zeitrahmen auswählen
+    $cutoff = SelTime
+    
+    if ($null -eq $cutoff) {
+        Log "Kein Zeitrahmen ausgewählt" "Warning"
+        StartCleanup
+        return
+    }
+    
+    # Bereinigung durchführen
+    DoCleanup $dirs $cutoff
+    
+    # Zurück zum Hauptmenü
+    StartCleanup
+}
+
+# Hauptmenü
 function StartCleanup {
-    # Zuerst prüfen, ob Statistiken angezeigt werden sollen
     cls
-    $hasUX = Get-Command ShowTitle -EA SilentlyContinue
-    if ($hasUX) {
+    
+    if (Get-Command ShowTitle -EA SilentlyContinue) {
         ShowTitle "Temp-Bereinigung" "Admin-Modus"
     } else {
         Write-Host "+===============================================+"
@@ -616,28 +499,26 @@ function StartCleanup {
     Write-Host "    1       [option]    Dateien bereinigen"
     Write-Host "    2       [option]    Statistik anzeigen"
     
-    # Navigation (konsistent mit PiM-Manager-Format)
+    # Navigation
     Write-Host ""
     Write-Host "    B       [back]      Zurück"
     Write-Host "    X       [exit]      Beenden"
     
     Write-Host ""
-    $choice = Read-Host "Option wählen"
+    $c = Read-Host "Option wählen"
     
-    if ($choice -match "^[Xx]$") {
-        # Beenden ohne Fehlermeldung
+    if ($c -match "^[Xx]$") {
         Log "Benutzer hat Beenden gewählt" "Info"
         return
     }
-    elseif ($choice -match "^[Bb]$") {
-        # Zurück zum aufrufenden Menü
+    elseif ($c -match "^[Bb]$") {
         Log "Benutzer hat Zurück gewählt" "Info"
         return
     }
     else {
-        switch ($choice) {
-            "1" { ContinueCleanup }
-            "2" { ShowStatistics }
+        switch ($c) {
+            "1" { CleanFiles }
+            "2" { ShowStats }
             default { 
                 Write-Host "`nUngültige Eingabe." -ForegroundColor Red 
                 Start-Sleep -Seconds 2
@@ -647,148 +528,7 @@ function StartCleanup {
     }
 }
 
-# Eigentliche Bereinigungslogik (ausgelagert aus StartCleanup)
-function ContinueCleanup {
-    # Temp-Verzeichnis prüfen
-    if (-not (Test-Path $tempPath)) {
-        Log "Temp-Verzeichnis nicht gefunden: $tempPath" "Error"
-        mkdir $tempPath -Force >$null
-        Log "Temp-Verzeichnis erstellt: $tempPath" "Info"
-        
-        Write-Host "`nEs gibt noch keine temporären Dateien zu bereinigen." -ForegroundColor Yellow
-        Write-Host "Taste drücken für Menü..."
-        [Console]::ReadKey($true) >$null
-        StartCleanup
-        return
-    }
-    
-    # Dateitypen auswählen
-    $selectedFolders = SelectFileTypes
-    
-    # Prüfen auf Zurück-Signal (B)
-    if ($selectedFolders -eq "B") {
-        Log "Zurück zum Hauptmenü von Dateitypen-Auswahl" "Info"
-        StartCleanup
-        return
-    }
-    
-    if ($selectedFolders.Count -eq 0) {
-        Log "Keine Dateitypen ausgewählt" "Warning"
-        StartCleanup
-        return
-    }
-    
-    # Zeitrahmen auswählen
-    $cutoffDate = SelectTimeframe
-    
-    if ($null -eq $cutoffDate) {
-        Log "Kein Zeitrahmen ausgewählt" "Warning"
-        StartCleanup
-        return
-    }
-    
-    # Bereinigung durchführen
-    PerformCleanup $selectedFolders $cutoffDate
-    
-    # Nach der Bereinigung zurück zum Hauptmenü
-    StartCleanup
-}
-
-# Statistik über temporäre Dateien anzeigen
-function ShowStatistics {
-    cls
-    $hasUX = Get-Command ShowTitle -EA SilentlyContinue
-    if ($hasUX) {
-        ShowTitle "Temp-Statistik" "Admin-Modus"
-    } else {
-        Write-Host "+===============================================+"
-        Write-Host "|             Temp-Statistik                   |"
-        Write-Host "|             (Admin-Modus)                    |"
-        Write-Host "+===============================================+"
-    }
-    
-    # Temp-Verzeichnis prüfen
-    if (-not (Test-Path $tempPath)) {
-        Log "Temp-Verzeichnis nicht gefunden: $tempPath" "Warning"
-        mkdir $tempPath -Force >$null
-        Log "Temp-Verzeichnis erstellt: $tempPath" "Info"
-        
-        Write-Host "`nEs gibt noch keine temporären Dateien zu analysieren." -ForegroundColor Yellow
-        
-        # Konsistentes UX mit Zurück-Option
-        Write-Host ""
-        Write-Host "    B       [back]      Zurück"
-        Write-Host ""
-        $choice = Read-Host "Option wählen"
-        
-        return  # Direkt zurück ohne ShowMainMenu
-    }
-    
-    $folders = GetTempSubfolders
-    
-    if ($folders.Count -eq 0) {
-        Write-Host "`nKeine Unterordner im temp-Verzeichnis gefunden." -ForegroundColor Yellow
-        
-        # Konsistentes UX mit Zurück-Option
-        Write-Host ""
-        Write-Host "    B       [back]      Zurück"
-        Write-Host ""
-        $choice = Read-Host "Option wählen"
-        
-        return  # Direkt zurück ohne ShowMainMenu
-    }
-    
-    Write-Host "`nStatistik der temporären Dateien:" -ForegroundColor Cyan
-    
-    $totalFiles = 0
-    $totalSize = 0
-    
-    # Tabellenkopf
-    Write-Host "`n  Ordner                    Dateien        Größe        Älteste Datei"
-    Write-Host "  --------------------------------------------------------------------"
-    
-    foreach ($folder in $folders) {
-        $folderPath = "$tempPath\$folder"
-        
-        if (-not (Test-Path $folderPath)) {
-            continue
-        }
-        
-        $files = Get-ChildItem $folderPath -Recurse -File
-        $fileCount = $files.Count
-        $totalFiles += $fileCount
-        
-        $size = ($files | Measure-Object -Property Length -Sum).Sum
-        $totalSize += $size
-        $sizeInMB = [math]::Round($size / 1MB, 2)
-        
-        # Älteste Datei finden
-        $oldestFile = $files | Sort-Object LastWriteTime | Select-Object -First 1
-        $oldestDate = if ($oldestFile) { $oldestFile.LastWriteTime.ToString("yyyy-MM-dd") } else { "N/A" }
-        
-        # Ausgabe
-        Write-Host ("  {0,-25} {1,7} {2,12} MB   {3,-10}" -f $folder, $fileCount, $sizeInMB, $oldestDate)
-    }
-    
-    # Gesamtstatistik
-    $totalSizeInMB = [math]::Round($totalSize / 1MB, 2)
-    Write-Host "  --------------------------------------------------------------------"
-    Write-Host ("  {0,-25} {1,7} {2,12} MB" -f "Gesamt:", $totalFiles, $totalSizeInMB)
-    
-    # Konsistentes UX mit Zurück-Option
-    Write-Host ""
-    Write-Host "    B       [back]      Zurück"
-    Write-Host ""
-    $choice = Read-Host "Option wählen"
-    
-    # Zurück zum Startmenü
-    StartCleanup
-}
-
 # Skriptstart
 Log "PiM-Bereinigung gestartet"
-
-# Direkt den Bereinigungsprozess starten, ohne Hauptmenü
 StartCleanup
-
 Log "PiM-Bereinigung beendet"
