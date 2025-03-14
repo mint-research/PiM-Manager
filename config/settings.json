@@ -2,6 +2,6 @@
   "Logging": {
     "Enabled": true,
     "Path": "temp\\logs",
-    "Mode": "PiM"
+    "Mode": "PowerShell"
   }
 }

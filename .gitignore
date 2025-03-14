@@ -1,8 +1,7 @@
 # PiM-Manager .gitignore
 
-# Alle Log-Dateien ausschließen
-docs/logs/
-docs/logging/
+# Alle temporären Dateien und Verzeichnisse ausschließen
+temp/
 
 # Ausschließen von Konfigurationsdateien, die lokale Einstellungen enthalten
 # Auskommentieren Sie diese Zeile, wenn Sie möchten, dass settings.json im Repository enthalten ist
