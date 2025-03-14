@@ -2,59 +2,202 @@
 # DisplayName: Logging-Einstellungen
 # Optimiert für Tokeneffizienz
 
-# Pfadberechnung (2 Ebenen hoch vom scripts\admin)
-$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$cfgPath = "$root\config"
-$cfgFile = "$cfgPath\settings.json"
-$tempPath = "$root\temp"
+# Pfadmodul laden
+$pathsMod = "$PSScriptRoot\..\..\modules\paths.psm1"
+if (Test-Path $pathsMod) {
+    try { 
+        Import-Module $pathsMod -Force -EA Stop 
+        $p = GetPaths $PSScriptRoot
+    } catch {
+        # Fallback bei Modulladefehler
+        $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $p = @{
+            root = $root
+            cfg = "$root\config"
+            temp = "$root\temp"
+            errMod = "$root\modules\error.psm1"
+            uxMod = "$root\modules\ux.psm1"
+            cfgMod = "$root\modules\config.psm1"
+            settings = "$root\config\settings.json"
+        }
+    }
+} else {
+    # Fallback ohne Pfadmodul
+    $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $p = @{
+        root = $root
+        cfg = "$root\config"
+        temp = "$root\temp"
+        errMod = "$root\modules\error.psm1"
+        uxMod = "$root\modules\ux.psm1"
+        cfgMod = "$root\modules\config.psm1"
+        settings = "$root\config\settings.json"
+    }
+}
+
+# Fehlermodul laden
+if (Test-Path $p.errMod) {
+    try { Import-Module $p.errMod -Force -EA Stop }
+    catch { 
+        Write-Host "Fehlermodul konnte nicht geladen werden: $_" -ForegroundColor Red 
+    }
+}
 
 # UX-Modul importieren
-$modPath = "$root\modules\ux.psm1"
-if (Test-Path $modPath) {
-    try { Import-Module $modPath -Force -EA Stop }
-    catch { Write-Host "UX-Fehler: $_" -ForegroundColor Red }
+if (Test-Path $p.uxMod) {
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        SafeOp {
+            Import-Module $p.uxMod -Force -EA Stop
+        } -m "UX-Modul konnte nicht geladen werden" -t "Warning"
+    } else {
+        try { 
+            Import-Module $p.uxMod -Force -EA Stop 
+        } catch { 
+            Write-Host "UX-Fehler: $_" -ForegroundColor Red 
+        }
+    }
+}
+
+# Konfigurationsmodul laden
+$useCfgMod = $false
+if (Test-Path $p.cfgMod) {
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        $useCfgMod = SafeOp {
+            Import-Module $p.cfgMod -Force -EA Stop
+            return $true
+        } -m "Konfigurationsmodul konnte nicht geladen werden" -def $false
+    } else {
+        try {
+            Import-Module $p.cfgMod -Force -EA Stop
+            $useCfgMod = $true
+        } catch {
+            Write-Host "Konfigurationsmodul konnte nicht geladen werden: $_" -ForegroundColor Yellow
+        }
+    }
+}
+
+# Konfiguration laden mit Fehlerbehandlung
+function LoadCfg($f = $p.settings) {
+    # Bei aktivem Konfigurationsmodul dieses nutzen
+    if ($useCfgMod -and (Get-Command GetConfig -EA SilentlyContinue)) {
+        try {
+            return GetConfig -name "settings"
+        } catch {
+            if (Get-Command Err -EA SilentlyContinue) {
+                Err "Fehler beim Laden der Konfiguration über Modul" $_ "Warning"
+            } else {
+                Write-Host "Fehler beim Laden der Konfiguration über Modul: $_" -ForegroundColor Yellow
+            }
+            # Fallback auf Legacy-Methode
+        }
+    }
+    
+    # Legacy-Methode (direkte Dateioperationen)
+    if (!(Test-Path $f)) {
+        if (Get-Command Err -EA SilentlyContinue) {
+            Err "Konfigurationsdatei nicht gefunden: $f" -t "Warning"
+        } else {
+            Write-Host "Keine Konfigurationsdatei. Logging deaktiviert." -ForegroundColor Yellow
+        }
+        return $null
+    }
+    
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        return SafeOp {
+            Get-Content $f -Raw | ConvertFrom-Json
+        } -m "Konfiguration konnte nicht geladen werden" -def $null
+    } else {
+        try {
+            return Get-Content $f -Raw | ConvertFrom-Json
+        } catch {
+            Write-Host "Fehler beim Lesen: $_" -ForegroundColor Red
+            return $null
+        }
+    }
+}
+
+# Konfiguration speichern
+function SaveCfg($cfg, $f = $p.settings) {
+    # Bei aktivem Konfigurationsmodul dieses nutzen
+    if ($useCfgMod -and (Get-Command SaveConfig -EA SilentlyContinue)) {
+        try {
+            return SaveConfig -name "settings" -config $cfg
+        } catch {
+            if (Get-Command Err -EA SilentlyContinue) {
+                Err "Fehler beim Speichern der Konfiguration über Modul" $_ "Warning"
+            } else {
+                Write-Host "Fehler beim Speichern der Konfiguration über Modul: $_" -ForegroundColor Yellow
+            }
+            # Fallback auf Legacy-Methode
+        }
+    }
+    
+    # Legacy-Methode (direkte Dateioperationen)
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        return SafeOp {
+            $cfg | ConvertTo-Json -Depth 4 | Set-Content $f
+            return $true
+        } -m "Konfiguration konnte nicht gespeichert werden" -def $false
+    } else {
+        try {
+            $cfg | ConvertTo-Json -Depth 4 | Set-Content $f
+            return $true
+        } catch {
+            Write-Host "Fehler beim Speichern: $_" -ForegroundColor Red
+            return $false
+        }
+    }
 }
 
 # Logging-Status anzeigen
 function Status {
-    if (Test-Path $cfgFile) {
-        try {
-            $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
-            
-            if ($cfg.Logging.Enabled) {
-                $mode = $cfg.Logging.Mode
-                $status = $mode -eq "PowerShell" ? "Aktiviert - PowerShell" : "Aktiviert - PiM-Manager"
-                $color = "Green"
-            } else {
-                $status = "Deaktiviert"
-                $color = "Red"
-            }
-            
-            Write-Host "`nAktueller Logging-Status: " -NoNewline
-            Write-Host $status -ForegroundColor $color
-            
-            # Log-Pfad bei aktiviertem Logging anzeigen
-            if ($cfg.Logging.Enabled) {
-                Write-Host "Logs: $root\$($cfg.Logging.Path)" -ForegroundColor Cyan
-            }
-        } catch { Write-Host "Fehler beim Lesen: $_" -ForegroundColor Red }
-    } else {
+    $cfg = LoadCfg
+    
+    if ($cfg -eq $null) {
         Write-Host "`nKeine Konfigurationsdatei. Logging deaktiviert." -ForegroundColor Yellow
+        return
+    }
+    
+    if ($cfg.Logging.Enabled) {
+        $mode = $cfg.Logging.Mode
+        $status = $mode -eq "PowerShell" ? "Aktiviert - PowerShell" : "Aktiviert - PiM-Manager"
+        $color = "Green"
+    } else {
+        $status = "Deaktiviert"
+        $color = "Red"
+    }
+    
+    Write-Host "`nAktueller Logging-Status: " -NoNewline
+    Write-Host $status -ForegroundColor $color
+    
+    # Log-Pfad bei aktiviertem Logging anzeigen
+    if ($cfg.Logging.Enabled) {
+        $logPath = Join-Path $p.root $cfg.Logging.Path
+        Write-Host "Logs: $logPath" -ForegroundColor Cyan
     }
 }
 
 # Logging deaktivieren
 function Disable {
-    if (Test-Path $cfgFile) {
-        try {
-            $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
-            $cfg.Logging.Enabled = $false
-            $cfg | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
-            Write-Host "Logging deaktiviert." -ForegroundColor Yellow
-            Write-Host "Änderung bei nächster Session wirksam." -ForegroundColor Cyan
-        } catch { Write-Host "Fehler: $_" -ForegroundColor Red }
-    } else {
-        Write-Host "Keine Konfigurationsdatei. Logging bereits deaktiviert." -ForegroundColor Yellow
+    if (!(Test-Path $p.settings)) {
+        if (Get-Command Err -EA SilentlyContinue) {
+            Err "Konfigurationsdatei nicht gefunden. Logging bereits deaktiviert." -t "Info"
+        } else {
+            Write-Host "Keine Konfigurationsdatei. Logging bereits deaktiviert." -ForegroundColor Yellow
+        }
+        return
+    }
+    
+    $cfg = LoadCfg
+    if ($cfg -eq $null) { return }
+    
+    $cfg.Logging.Enabled = $false
+    
+    $success = SaveCfg -cfg $cfg
+    
+    if ($success) {
+        Write-Host "Logging deaktiviert." -ForegroundColor Yellow
+        Write-Host "Änderung bei nächster Session wirksam." -ForegroundColor Cyan
     }
 }
 
@@ -67,21 +210,27 @@ function EnablePSH { Enable "PowerShell" }
 # Helper: Logging mit Modus aktivieren
 function Enable($Mode) {
     # Konfigurationspfad prüfen/erstellen
-    if (!(Test-Path $cfgPath)) { md $cfgPath -Force >$null }
-    
-    # Konfiguration laden oder erstellen
-    if (Test-Path $cfgFile) {
-        try { $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json }
-        catch {
-            $cfg = [PSCustomObject]@{
-                Logging = [PSCustomObject]@{
-                    Enabled = $false
-                    Path = "temp\logs"
-                    Mode = "PiM"
-                }
+    if (!(Test-Path $p.cfg)) { 
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            SafeOp {
+                md $p.cfg -Force >$null
+            } -m "Konfigurationsverzeichnis konnte nicht erstellt werden" -t "Error"
+        } else {
+            try {
+                md $p.cfg -Force >$null
+            } catch {
+                Write-Host "Fehler beim Erstellen des Konfigurationsverzeichnisses: $_" -ForegroundColor Red
+                return
             }
         }
-    } else {
+    }
+    
+    # Konfiguration laden oder erstellen
+    $cfg = LoadCfg
+    
+    if ($cfg -eq $null) {
+        # Bei aktivem Konfigurationsmodul wird die Standardkonfiguration bereits geladen
+        # Hier nur für Legacy-Fall eine neue Konfiguration erstellen
         $cfg = [PSCustomObject]@{
             Logging = [PSCustomObject]@{
                 Enabled = $false
@@ -102,7 +251,19 @@ function Enable($Mode) {
             Mode = $Mode
         }
         
-        $cfgObj = $cfg | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            $cfgObj = SafeOp {
+                $cfg | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+            } -m "Konfigurationsobjekt konnte nicht konvertiert werden" -def $cfg
+        } else {
+            try {
+                $cfgObj = $cfg | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+            } catch {
+                Write-Host "Fehler bei der Konvertierung: $_" -ForegroundColor Red
+                $cfgObj = $cfg
+            }
+        }
+        
         $cfgObj.Logging = $newLog
         $cfg = $cfgObj
     } else {
@@ -110,19 +271,43 @@ function Enable($Mode) {
     }
     
     # Speichern
-    $cfg | ConvertTo-Json -Depth 4 | Set-Content $cfgFile
+    $success = SaveCfg -cfg $cfg
+    
+    if (!$success) {
+        return
+    }
     
     # Temp-Verzeichnis prüfen/erstellen
-    if (!(Test-Path $tempPath)) {
-        md $tempPath -Force >$null
-        Write-Host "Temp-Verzeichnis erstellt: $tempPath" -ForegroundColor Green
+    if (!(Test-Path $p.temp)) {
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            SafeOp {
+                md $p.temp -Force >$null
+            } -m "Temp-Verzeichnis konnte nicht erstellt werden" -t "Warning"
+        } else {
+            try {
+                md $p.temp -Force >$null
+                Write-Host "Temp-Verzeichnis erstellt: $($p.temp)" -ForegroundColor Green
+            } catch {
+                Write-Host "Fehler beim Erstellen des Temp-Verzeichnisses: $_" -ForegroundColor Red
+            }
+        }
     }
     
     # Log-Verzeichnis erstellen
-    $logPath = "$root\$($cfg.Logging.Path)"
+    $logPath = Join-Path $p.root $cfg.Logging.Path
     if (!(Test-Path $logPath)) {
-        md $logPath -Force >$null
-        Write-Host "Log-Verzeichnis erstellt: $logPath" -ForegroundColor Green
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            SafeOp {
+                md $logPath -Force >$null
+            } -m "Log-Verzeichnis konnte nicht erstellt werden" -t "Warning"
+        } else {
+            try {
+                md $logPath -Force >$null
+                Write-Host "Log-Verzeichnis erstellt: $logPath" -ForegroundColor Green
+            } catch {
+                Write-Host "Fehler beim Erstellen des Log-Verzeichnisses: $_" -ForegroundColor Red
+            }
+        }
     }
     
     $mText = $Mode -eq "PowerShell" ? "PowerShell" : "PiM-Manager"
@@ -170,7 +355,13 @@ function Menu {
 
     if ($hasUX) {
         # UX-Modul nutzen
-        $result = SMenu -t "Logging-Manager" -m "Admin-Modus" -opts $menu -back -exit
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            $result = SafeOp {
+                SMenu -t "Logging-Manager" -m "Admin-Modus" -opts $menu -back -exit
+            } -m "Menü konnte nicht angezeigt werden" -def "B"
+        } else {
+            $result = SMenu -t "Logging-Manager" -m "Admin-Modus" -opts $menu -back -exit
+        }
         
         # Die SMenu-Funktion beendet den Prozess bereits bei X 
         # Wir müssen hier nur das Ergebnis B abfangen
@@ -191,7 +382,7 @@ function Menu {
         Write-Host ""
         
         # Optionen anzeigen
-        foreach ($k in ($menu.Keys | Sort)) {
+        foreach ($k in ($menu.Keys | Sort-Object)) {
             Write-Host "    $k       $($menu[$k].Display)"
         }
         
@@ -208,7 +399,19 @@ function Menu {
         } elseif ($ch -match "^[Bb]$") {
             return
         } elseif ($menu.ContainsKey($ch)) {
-            & $menu[$ch].Action
+            if (Get-Command SafeOp -EA SilentlyContinue) {
+                SafeOp {
+                    & $menu[$ch].Action
+                } -m "Aktion konnte nicht ausgeführt werden" -t "Warning"
+            } else {
+                try {
+                    & $menu[$ch].Action
+                } catch {
+                    Write-Host "Fehler bei der Ausführung: $_" -ForegroundColor Red
+                    Start-Sleep -Seconds 2
+                    Menu
+                }
+            }
         } else {
             Write-Host "Ungültige Option." -ForegroundColor Red
             Start-Sleep -Seconds 2

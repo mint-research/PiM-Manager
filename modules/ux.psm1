@@ -1,6 +1,36 @@
 # ux.psm1 - UI-Funktionen für den PiM-Manager (Tokenoptimiert)
 # Speicherort: modules-Verzeichnis
 
+# Pfadmodul laden, falls verfügbar
+$pathsMod = Join-Path (Split-Path -Parent $PSScriptRoot) "modules\paths.psm1"
+if (Test-Path $pathsMod) {
+    try { 
+        Import-Module $pathsMod -Force -EA Stop 
+        $p = GetPaths $PSScriptRoot
+    } catch { 
+        # Stille Fehlerbehandlung, da wir im Modul sind
+        $p = @{
+            root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+            errMod = Join-Path (Split-Path -Parent $PSScriptRoot) "modules\error.psm1"
+        }
+    }
+} else {
+    # Fallback ohne Pfadmodul
+    $p = @{
+        root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        errMod = Join-Path (Split-Path -Parent $PSScriptRoot) "modules\error.psm1"
+    }
+}
+
+# Fehlermodul laden, falls verfügbar
+if (Test-Path $p.errMod) {
+    try { 
+        Import-Module $p.errMod -Force -EA Stop 
+    } catch { 
+        # Stille Fehlerbehandlung, da wir im Modul sind
+    }
+}
+
 # Titel anzeigen
 function Title {
     param (
@@ -33,8 +63,19 @@ function GetMeta {
         return $meta
     }
     
-    # Ersten 10 Zeilen auslesen (für bessere Performance)
-    $c = Get-Content $path -TotalCount 10
+    # Ersten 10 Zeilen auslesen mit Fehlerbehandlung
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        $c = SafeOp {
+            Get-Content $path -TotalCount 10
+        } -m "Metadaten konnten nicht gelesen werden" -def @()
+    } else {
+        try {
+            $c = Get-Content $path -TotalCount 10
+        } catch {
+            Write-Host "Fehler beim Lesen der Metadaten: $_" -ForegroundColor Red
+            return $meta
+        }
+    }
     
     # Nach Metadaten suchen
     foreach ($l in $c) {
@@ -58,15 +99,35 @@ function ShowMenu {
     # Konsole löschen
     cls
 
-    # Pfad-Existenz prüfen
+    # Pfad-Existenz prüfen mit verbesserter Fehlerbehandlung
     if (!(Test-Path $path)) {
-        Write-Host "Fehler: Verzeichnis '$path' nicht gefunden" -ForegroundColor Red
+        if (Get-Command Err -EA SilentlyContinue) {
+            Err "Verzeichnis nicht gefunden: $path" -t "Warning"
+        } else {
+            Write-Host "Fehler: Verzeichnis '$path' nicht gefunden" -ForegroundColor Red
+        }
+        
         Write-Host "Erstelle Verzeichnis..." -ForegroundColor Yellow
-        md $path -Force >$null
+        
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            SafeOp {
+                md $path -Force >$null
+            } -m "Verzeichnis konnte nicht erstellt werden: $path" -t "Error"
+        } else {
+            try {
+                md $path -Force >$null
+            } catch {
+                Write-Host "Kritischer Fehler: Verzeichnis konnte nicht erstellt werden: $_" -ForegroundColor Red
+            }
+        }
     }
 
-    # Modus bestimmen
-    $mode = $path -match "admin" ? "Admin-Modus" : "User-Modus"
+    # Modus bestimmen - mit Pfadmodul falls verfügbar
+    if (Get-Command IsAdminScript -EA SilentlyContinue) {
+        $mode = IsAdminScript $path ? "Admin-Modus" : "User-Modus"
+    } else {
+        $mode = $path -match "admin" ? "Admin-Modus" : "User-Modus"
+    }
 
     # Header anzeigen
     Title "PiM-Manager" $mode
@@ -74,14 +135,42 @@ function ShowMenu {
     # Sortierte Items erstellen (Ordner zuerst, dann Dateien)
     $items = @()
     
-    # Ordner hinzufügen (außer admin im User-Modus)
-    Get-ChildItem $path | ? { 
-        $_.PSIsContainer -and 
-        !($mode -eq "User-Modus" -and $_.Name -eq "admin" -and $path -match "scripts$") 
-    } | Sort Name | % { $items += $_ }
-    
-    # Dateien hinzufügen
-    Get-ChildItem $path | ? { !$_.PSIsContainer } | Sort Name | % { $items += $_ }
+    # Ordner und Dateien einlesen mit Fehlerbehandlung
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        # Ordner hinzufügen (außer admin im User-Modus)
+        $folders = SafeOp {
+            Get-ChildItem $path | ? { 
+                $_.PSIsContainer -and 
+                !($mode -eq "User-Modus" -and $_.Name -eq "admin" -and $path -match "scripts$") 
+            } | Sort-Object Name
+        } -m "Ordner konnten nicht gelesen werden" -def @()
+        
+        foreach ($folder in $folders) {
+            $items += $folder
+        }
+        
+        # Dateien hinzufügen
+        $files = SafeOp {
+            Get-ChildItem $path | ? { !$_.PSIsContainer } | Sort-Object Name
+        } -m "Dateien konnten nicht gelesen werden" -def @()
+        
+        foreach ($file in $files) {
+            $items += $file
+        }
+    } else {
+        try {
+            # Ordner hinzufügen (außer admin im User-Modus)
+            Get-ChildItem $path | ? { 
+                $_.PSIsContainer -and 
+                !($mode -eq "User-Modus" -and $_.Name -eq "admin" -and $path -match "scripts$") 
+            } | Sort-Object Name | % { $items += $_ }
+            
+            # Dateien hinzufügen
+            Get-ChildItem $path | ? { !$_.PSIsContainer } | Sort-Object Name | % { $items += $_ }
+        } catch {
+            Write-Host "Fehler beim Einlesen des Verzeichnisses: $_" -ForegroundColor Red
+        }
+    }
     
     $menu = @{}
 
@@ -152,7 +241,7 @@ function SMenu {
     Title $t $m
     
     # Optionen anzeigen
-    $keys = $opts.Keys | Sort
+    $keys = $opts.Keys | Sort-Object
     foreach ($k in $keys) {
         Write-Host "    $k       $($opts[$k].Display)"
     }
@@ -182,7 +271,17 @@ function SMenu {
         return "B"
     }
     elseif ($opts.ContainsKey($ch)) {
-        & $opts[$ch].Action
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            SafeOp {
+                & $opts[$ch].Action
+            } -m "Aktion konnte nicht ausgeführt werden" -t "Warning"
+        } else {
+            try {
+                & $opts[$ch].Action
+            } catch {
+                Write-Host "Fehler bei der Ausführung: $_" -ForegroundColor Red
+            }
+        }
         return $ch
     }
     else {
