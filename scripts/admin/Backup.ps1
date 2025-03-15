@@ -17,6 +17,7 @@ if (Test-Path $pathsMod) {
             errMod = "$root\modules\error.psm1"
             uxMod = "$root\modules\ux.psm1"
             cfgMod = "$root\modules\config.psm1"
+            adminMod = "$root\modules\admin.psm1"
             backups = "$root\temp\backups"
         }
     }
@@ -30,6 +31,7 @@ if (Test-Path $pathsMod) {
         errMod = "$root\modules\error.psm1"
         uxMod = "$root\modules\ux.psm1"
         cfgMod = "$root\modules\config.psm1"
+        adminMod = "$root\modules\admin.psm1"
         backups = "$root\temp\backups"
     }
 }
@@ -60,6 +62,24 @@ if (Test-Path $p.uxMod) {
     }
 }
 
+# Admin-Modul laden
+$useAdminMod = $false
+if (Test-Path $p.adminMod) {
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        $useAdminMod = SafeOp {
+            Import-Module $p.adminMod -Force -EA Stop
+            return $true
+        } -m "Admin-Modul konnte nicht geladen werden" -def $false
+    } else {
+        try {
+            Import-Module $p.adminMod -Force -EA Stop
+            $useAdminMod = $true
+        } catch {
+            Write-Host "Admin-Modul konnte nicht geladen werden: $_" -ForegroundColor Yellow
+        }
+    }
+}
+
 # Konfigurationsmodul laden
 $useCfgMod = $false
 if (Test-Path $p.cfgMod) {
@@ -75,6 +95,37 @@ if (Test-Path $p.cfgMod) {
         } catch {
             Write-Host "Konfigurationsmodul konnte nicht geladen werden: $_" -ForegroundColor Yellow
         }
+    }
+}
+
+# Administratorrechte prüfen
+$hasAdminRights = $false
+if ($useAdminMod -and (Get-Command IsAdmin -EA SilentlyContinue)) {
+    $hasAdminRights = IsAdmin
+    
+    # Wenn keine Admin-Rechte, warnen und eventuell Rechte anfordern
+    if (!$hasAdminRights) {
+        if (Get-Command RequireAdmin -EA SilentlyContinue) {
+            RequireAdmin -message "Für Backup-Operationen werden Administratorrechte empfohlen, da einige Dateien möglicherweise geschützt sind."
+            # Nach RequireAdmin Aufruf nochmals prüfen
+            $hasAdminRights = IsAdmin
+        } else {
+            Write-Host "Warnung: Keine Administratorrechte. Einige Dateien können möglicherweise nicht gesichert werden." -ForegroundColor Yellow
+        }
+    }
+} else {
+    # Fallback-Methode zur Berechtigungsprüfung
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal $identity
+        $hasAdminRights = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        
+        if (!$hasAdminRights) {
+            Write-Host "Warnung: Keine Administratorrechte. Einige Dateien können möglicherweise nicht gesichert werden." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "Fehler bei der Berechtigungsprüfung: $_" -ForegroundColor Red
+        Write-Host "Es wird angenommen, dass keine Administratorrechte vorliegen." -ForegroundColor Yellow
     }
 }
 
@@ -239,6 +290,13 @@ function ShouldSkip($path, $rules) {
 
 # Backup erstellen
 function BkpCreate {
+    # Admin-Rechte für Backup-Operationen empfehlen
+    if (!$hasAdminRights -and $useAdminMod -and (Get-Command RequireAdmin -EA SilentlyContinue)) {
+        RequireAdmin -message "Für vollständige Backup-Operationen werden Administratorrechte empfohlen."
+        # Nach RequireAdmin Aufruf nochmals prüfen
+        $hasAdminRights = IsAdmin
+    }
+    
     Log "Backup wird vorbereitet..."
     
     # Zeitstempel für Backup-Verzeichnis
@@ -421,6 +479,328 @@ function BkpCreate {
     Write-Host "Speicherort: $curBkpPath" -ForegroundColor Cyan
     Write-Host "Gesicherte Dateien: $totFiles" -ForegroundColor Cyan
     Write-Host "Davon Konfigurationsdateien: $($cfgFiles.Count)" -ForegroundColor Cyan
+    
+    # Pause
+    Write-Host "`nTaste drücken für Menü..."
+    [Console]::ReadKey($true) >$null
+    BkpMenu
+}
+
+# Hauptmenü anzeigen
+function BkpMenu {
+    # UX-Funktion prüfen
+    $hasUX = Get-Command SMenu -EA SilentlyContinue
+    
+    # Menüoptionen
+    $opts = @{
+        "1" = @{
+            Display = "[option]    Backup erstellen"
+            Action = { BkpCreate }
+        }
+        "2" = @{
+            Display = "[option]    Backup wiederherstellen"
+            Action = { BkpRestore }
+        }
+        "3" = @{
+            Display = "[option]    Backup-Verwaltung"
+            Action = { BkpManage }
+        }
+    }
+    
+    if ($hasUX) {
+        # UX-Modul nutzen
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            $result = SafeOp {
+                SMenu -t "Backup-Manager" -m "Admin-Modus" -opts $opts -back -exit
+            } -m "Menü konnte nicht angezeigt werden" -def "B"
+        } else {
+            $result = SMenu -t "Backup-Manager" -m "Admin-Modus" -opts $opts -back -exit
+        }
+        
+        if ($result -eq "B") {
+            return
+        }
+    } else {
+        # Fallback-Menü
+        cls
+        Write-Host "+===============================================+"
+        Write-Host "|              Backup-Manager                  |"
+        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "+===============================================+"
+        
+        # Optionen anzeigen
+        foreach ($k in ($opts.Keys | Sort-Object)) {
+            Write-Host "    $k       $($opts[$k].Display)"
+        }
+        
+        # Navigation
+        Write-Host ""
+        Write-Host "    B       [back]      Zurück"
+        Write-Host "    X       [exit]      Beenden"
+        
+        # Eingabe
+        Write-Host ""
+        $ch = Read-Host "Option wählen"
+        
+        if ($ch -match "^[Xx]$") {
+            Write-Host "PiM-Manager wird beendet..." -ForegroundColor Yellow
+            exit
+        } elseif ($ch -match "^[Bb]$") {
+            return
+        } elseif ($opts.ContainsKey($ch)) {
+            if (Get-Command SafeOp -EA SilentlyContinue) {
+                SafeOp {
+                    & $opts[$ch].Action
+                } -m "Aktion konnte nicht ausgeführt werden" -t "Warning"
+            } else {
+                try {
+                    & $opts[$ch].Action
+                } catch {
+                    Log "Fehler bei der Ausführung: $_" "Error"
+                    Start-Sleep -Seconds 2
+                    BkpMenu
+                }
+            }
+        } else {
+            Write-Host "Ungültige Option." -ForegroundColor Red
+            Start-Sleep -Seconds 2
+            BkpMenu
+        }
+    }
+}
+
+# Skriptstart
+Log "Backup-Manager gestartet"
+BkpMenu
+Log "Backup-Manager beendet"
+
+# Backup-Verwaltung
+function BkpManage {
+    # Prüfen auf vorhandene Backups
+    if (!(Test-Path $p.backups)) {
+        if (Get-Command Err -EA SilentlyContinue) {
+            Err "Keine Backups gefunden" -t "Warning"
+        } else {
+            Log "Keine Backups gefunden" "Warning"
+        }
+        
+        Write-Host "`nEs wurden keine Backups gefunden." -ForegroundColor Yellow
+        
+        # Pause
+        Write-Host "`nTaste drücken für Menü..."
+        [Console]::ReadKey($true) >$null
+        BkpMenu
+        return
+    }
+    
+    # Verfügbare Backups suchen
+    $bkps = if (Get-Command SafeOp -EA SilentlyContinue) {
+        SafeOp {
+            Get-ChildItem $p.backups -Directory | ? { $_.Name -match "^backup-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}$" } | Sort-Object Name -Descending
+        } -m "Backups konnten nicht aufgelistet werden" -def @()
+    } else {
+        try {
+            Get-ChildItem $p.backups -Directory | ? { $_.Name -match "^backup-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}$" } | Sort-Object Name -Descending
+        } catch {
+            Log "Fehler beim Auflisten der Backups: $_" "Error"
+            return
+        }
+    }
+    
+    if ($bkps.Count -eq 0) {
+        if (Get-Command Err -EA SilentlyContinue) {
+            Err "Keine Backups gefunden" -t "Warning"
+        } else {
+            Log "Keine Backups gefunden" "Warning"
+        }
+        
+        Write-Host "`nEs wurden keine Backups gefunden." -ForegroundColor Yellow
+        
+        # Pause
+        Write-Host "`nTaste drücken für Menü..."
+        [Console]::ReadKey($true) >$null
+        BkpMenu
+        return
+    }
+    
+    # Backups anzeigen
+    cls
+    $hasUX = Get-Command Title -EA SilentlyContinue
+    if ($hasUX) {
+        Title "Backup-Verwaltung" "Admin-Modus"
+    } else {
+        Write-Host "+===============================================+"
+        Write-Host "|            Backup-Verwaltung                 |"
+        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "+===============================================+"
+    }
+    
+    Write-Host "`nVerfügbare Backups:`n" -ForegroundColor Cyan
+    
+    for ($i = 0; $i -lt $bkps.Count; $i++) {
+        $b = $bkps[$i]
+        $date = $b.Name.Substring(7)  # "backup-" entfernen
+        
+        $fileInfo = if (Get-Command SafeOp -EA SilentlyContinue) {
+            $files = SafeOp {
+                (Get-ChildItem $b.FullName -Recurse -File)
+            } -m "Dateien konnten nicht aufgelistet werden" -def @()
+            
+            $count = $files.Count
+            $size = "{0:N2} MB" -f ((($files | Measure-Object -Property Length -Sum).Sum) / 1MB)
+            @{Count = $count; Size = $size}
+        } else {
+            try {
+                $files = Get-ChildItem $b.FullName -Recurse -File
+                $count = $files.Count
+                $size = "{0:N2} MB" -f ((($files | Measure-Object -Property Length -Sum).Sum) / 1MB)
+                @{Count = $count; Size = $size}
+            } catch {
+                Log "Fehler beim Berechnen der Backup-Größe: $_" "Warning"
+                @{Count = 0; Size = "0.00 MB"}
+            }
+        }
+        
+        # Prüfen, ob Konfigurationsdateien enthalten sind
+        $cfgPath = Join-Path $b.FullName "config"
+        $hasCfg = Test-Path $cfgPath
+        $cfgInfo = if ($hasCfg) { " (enthält Konfigurationen)" } else { "" }
+        
+        Write-Host "  $($i+1). $date - $($fileInfo.Count) Dateien - $($fileInfo.Size)$cfgInfo"
+    }
+    
+    # Auswahl
+    Write-Host "`nGeben Sie die Nummer des zu löschenden Backups ein"
+    Write-Host "oder 'A' um alle Backups zu löschen,"
+    Write-Host "oder 'B' für zurück zum Hauptmenü."
+    $ch = Read-Host "`nAuswahl"
+    
+    if ($ch -match "^[Bb]$") {
+        BkpMenu
+        return
+    }
+    
+    if ($ch -match "^[Aa]$") {
+        # Bestätigung für Löschung aller Backups
+        Write-Host "`nSind Sie sicher, dass Sie ALLE Backups löschen möchten?" -ForegroundColor Red
+        Write-Host "Diese Aktion kann nicht rückgängig gemacht werden!" -ForegroundColor Red
+        $conf = Read-Host "Bestätigen Sie mit 'ja'"
+        
+        if ($conf -eq "ja") {
+            if (Get-Command Err -EA SilentlyContinue) {
+                Err "Lösche alle Backups" -t "Warning"
+            } else {
+                Log "Lösche alle Backups" "Warning"
+            }
+            
+            foreach ($b in $bkps) {
+                if (Get-Command SafeOp -EA SilentlyContinue) {
+                    SafeOp {
+                        Remove-Item $b.FullName -Recurse -Force
+                    } -m "Backup konnte nicht gelöscht werden: $($b.Name)" -t "Error"
+                    
+                    if (Get-Command Err -EA SilentlyContinue) {
+                        Err "Backup gelöscht: $($b.Name)" -t "Info"
+                    } else {
+                        Log "Backup gelöscht: $($b.Name)" "Info"
+                    }
+                } else {
+                    try {
+                        Remove-Item $b.FullName -Recurse -Force
+                        Log "Backup gelöscht: $($b.Name)" "Info"
+                    } catch {
+                        Log "Fehler beim Löschen des Backups: $($b.Name) - $_" "Error"
+                    }
+                }
+            }
+            
+            Write-Host "`nAlle Backups wurden gelöscht." -ForegroundColor Green
+        } else {
+            Write-Host "`nLöschung abgebrochen." -ForegroundColor Yellow
+        }
+        
+        # Pause
+        Write-Host "`nTaste drücken für Menü..."
+        [Console]::ReadKey($true) >$null
+        BkpMenu
+        return
+    }
+    
+    # Numerischen Wert validieren
+    if (!($ch -match "^\d+$")) {
+        if (Get-Command Err -EA SilentlyContinue) {
+            Err "Ungültige Eingabe: $ch" -t "Warning"
+        } else {
+            Log "Ungültige Eingabe: $ch" "Warning"
+        }
+        
+        Write-Host "`nUngültige Eingabe. Bitte eine Zahl eingeben." -ForegroundColor Red
+        
+        # Pause
+        Write-Host "`nTaste drücken für Menü..."
+        [Console]::ReadKey($true) >$null
+        BkpManage
+        return
+    }
+    
+    $idx = [int]$ch - 1
+    
+    # Index-Bereichsprüfung
+    if ($idx -lt 0 -or $idx -ge $bkps.Count) {
+        if (Get-Command Err -EA SilentlyContinue) {
+            Err "Ungültiger Index: $idx" -t "Warning"
+        } else {
+            Log "Ungültiger Index: $idx" "Warning"
+        }
+        
+        Write-Host "`nUngültige Auswahl. Bitte wählen Sie eine Zahl zwischen 1 und $($bkps.Count)." -ForegroundColor Red
+        
+        # Pause
+        Write-Host "`nTaste drücken für Menü..."
+        [Console]::ReadKey($true) >$null
+        BkpManage
+        return
+    }
+    
+    # Bestätigung
+    $selBkp = $bkps[$idx]
+    $bkpDate = $selBkp.Name.Substring(7)
+    
+    # Prüfen, ob Konfigurationsdateien enthalten sind
+    $cfgPath = Join-Path $selBkp.FullName "config"
+    $hasCfg = Test-Path $cfgPath
+    $cfgInfo = if ($hasCfg) { " (enthält Konfigurationen)" } else { "" }
+    
+    Write-Host "`nSie haben folgendes Backup ausgewählt:"
+    Write-Host "Datum: $bkpDate" -ForegroundColor Cyan
+    Write-Host "Pfad: $($selBkp.FullName)$cfgInfo" -ForegroundColor Cyan
+    
+    Write-Host "`nMöchten Sie dieses Backup löschen?" -ForegroundColor Yellow
+    $conf = Read-Host "Bestätigen Sie mit 'j'"
+    
+    if ($conf -eq "j") {
+        if (Get-Command Err -EA SilentlyContinue) {
+            Err "Lösche Backup: $($selBkp.Name)" -t "Warning"
+        } else {
+            Log "Lösche Backup: $($selBkp.Name)" "Warning"
+        }
+        
+        if (Get-Command SafeOp -EA SilentlyContinue) {
+            SafeOp {
+                Remove-Item $selBkp.FullName -Recurse -Force
+            } -m "Backup konnte nicht gelöscht werden: $($selBkp.Name)" -t "Error"
+        } else {
+            try {
+                Remove-Item $selBkp.FullName -Recurse -Force
+            } catch {
+                Log "Fehler beim Löschen des Backups: $_" "Error"
+            }
+        }
+        
+        Write-Host "`nBackup wurde gelöscht." -ForegroundColor Green
+    } else {
+        Write-Host "`nLöschung abgebrochen." -ForegroundColor Yellow
+    }
     
     # Pause
     Write-Host "`nTaste drücken für Menü..."
@@ -782,325 +1162,3 @@ function BkpRestore {
     [Console]::ReadKey($true) >$null
     BkpMenu
 }
-
-# Backup-Verwaltung
-function BkpManage {
-    # Prüfen auf vorhandene Backups
-    if (!(Test-Path $p.backups)) {
-        if (Get-Command Err -EA SilentlyContinue) {
-            Err "Keine Backups gefunden" -t "Warning"
-        } else {
-            Log "Keine Backups gefunden" "Warning"
-        }
-        
-        Write-Host "`nEs wurden keine Backups gefunden." -ForegroundColor Yellow
-        
-        # Pause
-        Write-Host "`nTaste drücken für Menü..."
-        [Console]::ReadKey($true) >$null
-        BkpMenu
-        return
-    }
-    
-    # Verfügbare Backups suchen
-    $bkps = if (Get-Command SafeOp -EA SilentlyContinue) {
-        SafeOp {
-            Get-ChildItem $p.backups -Directory | ? { $_.Name -match "^backup-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}$" } | Sort-Object Name -Descending
-        } -m "Backups konnten nicht aufgelistet werden" -def @()
-    } else {
-        try {
-            Get-ChildItem $p.backups -Directory | ? { $_.Name -match "^backup-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}$" } | Sort-Object Name -Descending
-        } catch {
-            Log "Fehler beim Auflisten der Backups: $_" "Error"
-            return
-        }
-    }
-    
-    if ($bkps.Count -eq 0) {
-        if (Get-Command Err -EA SilentlyContinue) {
-            Err "Keine Backups gefunden" -t "Warning"
-        } else {
-            Log "Keine Backups gefunden" "Warning"
-        }
-        
-        Write-Host "`nEs wurden keine Backups gefunden." -ForegroundColor Yellow
-        
-        # Pause
-        Write-Host "`nTaste drücken für Menü..."
-        [Console]::ReadKey($true) >$null
-        BkpMenu
-        return
-    }
-    
-    # Backups anzeigen
-    cls
-    $hasUX = Get-Command Title -EA SilentlyContinue
-    if ($hasUX) {
-        Title "Backup-Verwaltung" "Admin-Modus"
-    } else {
-        Write-Host "+===============================================+"
-        Write-Host "|            Backup-Verwaltung                 |"
-        Write-Host "|             (Admin-Modus)                    |"
-        Write-Host "+===============================================+"
-    }
-    
-    Write-Host "`nVerfügbare Backups:`n" -ForegroundColor Cyan
-    
-    for ($i = 0; $i -lt $bkps.Count; $i++) {
-        $b = $bkps[$i]
-        $date = $b.Name.Substring(7)  # "backup-" entfernen
-        
-        $fileInfo = if (Get-Command SafeOp -EA SilentlyContinue) {
-            $files = SafeOp {
-                (Get-ChildItem $b.FullName -Recurse -File)
-            } -m "Dateien konnten nicht aufgelistet werden" -def @()
-            
-            $count = $files.Count
-            $size = "{0:N2} MB" -f ((($files | Measure-Object -Property Length -Sum).Sum) / 1MB)
-            @{Count = $count; Size = $size}
-        } else {
-            try {
-                $files = Get-ChildItem $b.FullName -Recurse -File
-                $count = $files.Count
-                $size = "{0:N2} MB" -f ((($files | Measure-Object -Property Length -Sum).Sum) / 1MB)
-                @{Count = $count; Size = $size}
-            } catch {
-                Log "Fehler beim Berechnen der Backup-Größe: $_" "Warning"
-                @{Count = 0; Size = "0.00 MB"}
-            }
-        }
-        
-        # Prüfen, ob Konfigurationsdateien enthalten sind
-        $cfgPath = Join-Path $b.FullName "config"
-        $hasCfg = Test-Path $cfgPath
-        $cfgInfo = if ($hasCfg) { " (enthält Konfigurationen)" } else { "" }
-        
-        Write-Host "  $($i+1). $date - $($fileInfo.Count) Dateien - $($fileInfo.Size)$cfgInfo"
-    }
-    
-    # Auswahl
-    Write-Host "`nGeben Sie die Nummer des zu löschenden Backups ein"
-    Write-Host "oder 'A' um alle Backups zu löschen,"
-    Write-Host "oder 'B' für zurück zum Hauptmenü."
-    $ch = Read-Host "`nAuswahl"
-    
-    if ($ch -match "^[Bb]$") {
-        BkpMenu
-        return
-    }
-    
-    if ($ch -match "^[Aa]$") {
-        # Bestätigung für Löschung aller Backups
-        Write-Host "`nSind Sie sicher, dass Sie ALLE Backups löschen möchten?" -ForegroundColor Red
-        Write-Host "Diese Aktion kann nicht rückgängig gemacht werden!" -ForegroundColor Red
-        $conf = Read-Host "Bestätigen Sie mit 'ja'"
-        
-        if ($conf -eq "ja") {
-            if (Get-Command Err -EA SilentlyContinue) {
-                Err "Lösche alle Backups" -t "Warning"
-            } else {
-                Log "Lösche alle Backups" "Warning"
-            }
-            
-            foreach ($b in $bkps) {
-                if (Get-Command SafeOp -EA SilentlyContinue) {
-                    SafeOp {
-                        Remove-Item $b.FullName -Recurse -Force
-                    } -m "Backup konnte nicht gelöscht werden: $($b.Name)" -t "Error"
-                    
-                    if (Get-Command Err -EA SilentlyContinue) {
-                        Err "Backup gelöscht: $($b.Name)" -t "Info"
-                    } else {
-                        Log "Backup gelöscht: $($b.Name)" "Info"
-                    }
-                } else {
-                    try {
-                        Remove-Item $b.FullName -Recurse -Force
-                        Log "Backup gelöscht: $($b.Name)" "Info"
-                    } catch {
-                        Log "Fehler beim Löschen des Backups: $($b.Name) - $_" "Error"
-                    }
-                }
-            }
-            
-            Write-Host "`nAlle Backups wurden gelöscht." -ForegroundColor Green
-        } else {
-            Write-Host "`nLöschung abgebrochen." -ForegroundColor Yellow
-        }
-        
-        # Pause
-        Write-Host "`nTaste drücken für Menü..."
-        [Console]::ReadKey($true) >$null
-        BkpMenu
-        return
-    }
-    
-    # Numerischen Wert validieren
-    if (!($ch -match "^\d+$")) {
-        if (Get-Command Err -EA SilentlyContinue) {
-            Err "Ungültige Eingabe: $ch" -t "Warning"
-        } else {
-            Log "Ungültige Eingabe: $ch" "Warning"
-        }
-        
-        Write-Host "`nUngültige Eingabe. Bitte eine Zahl eingeben." -ForegroundColor Red
-        
-        # Pause
-        Write-Host "`nTaste drücken für Menü..."
-        [Console]::ReadKey($true) >$null
-        BkpManage
-        return
-    }
-    
-    $idx = [int]$ch - 1
-    
-    # Index-Bereichsprüfung
-    if ($idx -lt 0 -or $idx -ge $bkps.Count) {
-        if (Get-Command Err -EA SilentlyContinue) {
-            Err "Ungültiger Index: $idx" -t "Warning"
-        } else {
-            Log "Ungültiger Index: $idx" "Warning"
-        }
-        
-        Write-Host "`nUngültige Auswahl. Bitte wählen Sie eine Zahl zwischen 1 und $($bkps.Count)." -ForegroundColor Red
-        
-        # Pause
-        Write-Host "`nTaste drücken für Menü..."
-        [Console]::ReadKey($true) >$null
-        BkpManage
-        return
-    }
-    
-    # Bestätigung
-    $selBkp = $bkps[$idx]
-    $bkpDate = $selBkp.Name.Substring(7)
-    
-    # Prüfen, ob Konfigurationsdateien enthalten sind
-    $cfgPath = Join-Path $selBkp.FullName "config"
-    $hasCfg = Test-Path $cfgPath
-    $cfgInfo = if ($hasCfg) { " (enthält Konfigurationen)" } else { "" }
-    
-    Write-Host "`nSie haben folgendes Backup ausgewählt:"
-    Write-Host "Datum: $bkpDate" -ForegroundColor Cyan
-    Write-Host "Pfad: $($selBkp.FullName)$cfgInfo" -ForegroundColor Cyan
-    
-    Write-Host "`nMöchten Sie dieses Backup löschen?" -ForegroundColor Yellow
-    $conf = Read-Host "Bestätigen Sie mit 'j'"
-    
-    if ($conf -eq "j") {
-        if (Get-Command Err -EA SilentlyContinue) {
-            Err "Lösche Backup: $($selBkp.Name)" -t "Warning"
-        } else {
-            Log "Lösche Backup: $($selBkp.Name)" "Warning"
-        }
-        
-        if (Get-Command SafeOp -EA SilentlyContinue) {
-            SafeOp {
-                Remove-Item $selBkp.FullName -Recurse -Force
-            } -m "Backup konnte nicht gelöscht werden: $($selBkp.Name)" -t "Error"
-        } else {
-            try {
-                Remove-Item $selBkp.FullName -Recurse -Force
-            } catch {
-                Log "Fehler beim Löschen des Backups: $_" "Error"
-            }
-        }
-        
-        Write-Host "`nBackup wurde gelöscht." -ForegroundColor Green
-    } else {
-        Write-Host "`nLöschung abgebrochen." -ForegroundColor Yellow
-    }
-    
-    # Pause
-    Write-Host "`nTaste drücken für Menü..."
-    [Console]::ReadKey($true) >$null
-    BkpMenu
-}
-
-# Hauptmenü anzeigen
-function BkpMenu {
-    # UX-Funktion prüfen
-    $hasUX = Get-Command SMenu -EA SilentlyContinue
-    
-    # Menüoptionen
-    $opts = @{
-        "1" = @{
-            Display = "[option]    Backup erstellen"
-            Action = { BkpCreate }
-        }
-        "2" = @{
-            Display = "[option]    Backup wiederherstellen"
-            Action = { BkpRestore }
-        }
-        "3" = @{
-            Display = "[option]    Backup-Verwaltung"
-            Action = { BkpManage }
-        }
-    }
-    
-    if ($hasUX) {
-        # UX-Modul nutzen
-        if (Get-Command SafeOp -EA SilentlyContinue) {
-            $result = SafeOp {
-                SMenu -t "Backup-Manager" -m "Admin-Modus" -opts $opts -back -exit
-            } -m "Menü konnte nicht angezeigt werden" -def "B"
-        } else {
-            $result = SMenu -t "Backup-Manager" -m "Admin-Modus" -opts $opts -back -exit
-        }
-        
-        if ($result -eq "B") {
-            return
-        }
-    } else {
-        # Fallback-Menü
-        cls
-        Write-Host "+===============================================+"
-        Write-Host "|              Backup-Manager                  |"
-        Write-Host "|             (Admin-Modus)                    |"
-        Write-Host "+===============================================+"
-        
-        # Optionen anzeigen
-        foreach ($k in ($opts.Keys | Sort-Object)) {
-            Write-Host "    $k       $($opts[$k].Display)"
-        }
-        
-        # Navigation
-        Write-Host ""
-        Write-Host "    B       [back]      Zurück"
-        Write-Host "    X       [exit]      Beenden"
-        
-        # Eingabe
-        Write-Host ""
-        $ch = Read-Host "Option wählen"
-        
-        if ($ch -match "^[Xx]$") {
-            Write-Host "PiM-Manager wird beendet..." -ForegroundColor Yellow
-            exit
-        } elseif ($ch -match "^[Bb]$") {
-            return
-        } elseif ($opts.ContainsKey($ch)) {
-            if (Get-Command SafeOp -EA SilentlyContinue) {
-                SafeOp {
-                    & $opts[$ch].Action
-                } -m "Aktion konnte nicht ausgeführt werden" -t "Warning"
-            } else {
-                try {
-                    & $opts[$ch].Action
-                } catch {
-                    Log "Fehler bei der Ausführung: $_" "Error"
-                    Start-Sleep -Seconds 2
-                    BkpMenu
-                }
-            }
-        } else {
-            Write-Host "Ungültige Option." -ForegroundColor Red
-            Start-Sleep -Seconds 2
-            BkpMenu
-        }
-    }
-}
-
-# Skriptstart
-Log "Backup-Manager gestartet"
-BkpMenu
-Log "Backup-Manager beendet"

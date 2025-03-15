@@ -7,39 +7,117 @@ Kurzbeschreibung des Skripts.
 #>
 
 # Pfadberechnung nach Position
-if ($PSScriptRoot -match "admin$") {
-    $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    $isAdmin = $true
+$pathsMod = "$PSScriptRoot\..\..\modules\paths.psm1"
+if (Test-Path $pathsMod) {
+    try { 
+        Import-Module $pathsMod -Force -EA Stop 
+        $p = GetPaths $PSScriptRoot
+    } catch {
+        # Fallback bei Modulladefehler
+        $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $p = @{
+            root = $root
+            cfg = "$root\config"
+            temp = "$root\temp"
+            errMod = "$root\modules\error.psm1"
+            uxMod = "$root\modules\ux.psm1"
+            adminMod = "$root\modules\admin.psm1"
+        }
+    }
 } else {
-    $root = Split-Path -Parent $PSScriptRoot
-    $isAdmin = $false
+    # Fallback ohne Pfadmodul
+    $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $p = @{
+        root = $root
+        cfg = "$root\config"
+        temp = "$root\temp"
+        errMod = "$root\modules\error.psm1"
+        uxMod = "$root\modules\ux.psm1"
+        adminMod = "$root\modules\admin.psm1"
+    }
 }
 
-$cfgPath = "$root\config"
-$tempPath = "$root\temp"
-$logPath = "$tempPath\logs"
+$logPath = "$p.temp\logs"
+
+# Fehlermodul laden
+if (Test-Path $p.errMod) {
+    try { Import-Module $p.errMod -Force -EA Stop }
+    catch { 
+        Write-Host "Fehlermodul konnte nicht geladen werden: $_" -ForegroundColor Red 
+    }
+}
 
 # UX-Modul laden
-$modPath = "$root\modules\ux.psm1"
-
-if (Test-Path $modPath) {
-    try { 
-        Import-Module $modPath -Force -EA Stop 
-        Write-Verbose "UX-Modul geladen: $modPath"
-    } catch {
-        Write-Host "UX-Fehler: $_" -ForegroundColor Red
+if (Test-Path $p.uxMod) {
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        SafeOp {
+            Import-Module $p.uxMod -Force -EA Stop
+        } -m "UX-Modul konnte nicht geladen werden" -t "Warning"
+    } else {
+        try { 
+            Import-Module $p.uxMod -Force -EA Stop 
+        } catch { 
+            Write-Host "UX-Fehler: $_" -ForegroundColor Red 
+        }
     }
-} else {
-    Write-Host "UX-Modul nicht gefunden: $modPath" -ForegroundColor Red
 }
 
-# Admin-Rechte prüfen
+# Admin-Modul laden und Administratorrechte prüfen
+$useAdminMod = $false
+$hasAdminRights = $false
+
+if (Test-Path $p.adminMod) {
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        $useAdminMod = SafeOp {
+            Import-Module $p.adminMod -Force -EA Stop
+            return $true
+        } -m "Admin-Modul konnte nicht geladen werden" -def $false
+    } else {
+        try {
+            Import-Module $p.adminMod -Force -EA Stop
+            $useAdminMod = $true
+        } catch {
+            Write-Host "Admin-Modul konnte nicht geladen werden: $_" -ForegroundColor Yellow
+        }
+    }
+    
+    # Administratorrechte prüfen falls Admin-Modul geladen wurde
+    if ($useAdminMod -and (Get-Command IsAdmin -EA SilentlyContinue)) {
+        $hasAdminRights = IsAdmin
+        # Bei Admin-Skripten Rechte ggf. anfordern
+        if (!$hasAdminRights -and $PSScriptRoot -match "\\admin\\") {
+            if (Get-Command RequireAdmin -EA SilentlyContinue) {
+                RequireAdmin -message "Dieses Skript erfordert Administratorrechte."
+                # Nach RequireAdmin Aufruf nochmals prüfen
+                $hasAdminRights = IsAdmin
+            } else {
+                Write-Host "Warnung: Dieses Skript erfordert Administratorrechte!" -ForegroundColor Yellow
+            }
+        }
+    }
+}
+
+# Admin-Rechte prüfen (Legacy-Methode als Fallback)
 function IsAdmin {
-    if ($isAdmin) {
-        # Berechtigungsprüfungen hier einfügen
+    # Neue Methode über Admin-Modul nutzen, falls verfügbar
+    if ($useAdminMod -and (Get-Command IsAdmin -EA SilentlyContinue)) {
+        return IsAdmin
+    }
+    
+    # Legacy-Methode 1: Pfadbasierte Prüfung
+    if ($PSScriptRoot -match "admin$") {
         return $true
     }
-    return $true  # Für normale Skripte immer true
+    
+    # Legacy-Methode 2: Einfache .NET-Prüfung
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal $identity
+        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        Write-Host "Fehler bei Windows-Berechtigungsprüfung: $_" -ForegroundColor Red
+        return $false
+    }
 }
 
 # Log-Funktion
@@ -79,6 +157,10 @@ function Opt1 {
     Log "Option 1 ausgewählt"
     Write-Host "Option 1 wird ausgeführt..." -ForegroundColor Cyan
     
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Mit Admin-Rechten" : "Ohne Admin-Rechte"
+    Write-Host "Ausführungsmodus: $statusText" -ForegroundColor Cyan
+    
     # Eigene Logik implementieren
     
     # Pause danach
@@ -91,6 +173,17 @@ function Opt1 {
 function Opt2 {
     Log "Option 2 ausgewählt"
     Write-Host "Option 2 wird ausgeführt..." -ForegroundColor Cyan
+    
+    # Admin-Rechte prüfen falls erforderlich
+    if (!$hasAdminRights -and $useAdminMod -and (Get-Command RequireAdmin -EA SilentlyContinue)) {
+        RequireAdmin -message "Diese Option erfordert Administratorrechte."
+        # Nach RequireAdmin Aufruf nochmals prüfen
+        $hasAdminRights = IsAdmin
+    }
+    
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Mit Admin-Rechten" : "Ohne Admin-Rechte"
+    Write-Host "Ausführungsmodus: $statusText" -ForegroundColor Cyan
     
     # Eigene Logik implementieren
     
@@ -106,7 +199,7 @@ function Opt3 {
     Write-Host "Option 3 wird ausgeführt..." -ForegroundColor Cyan
     
     # Konfigdatei-Beispiel
-    $cfgFile = "$cfgPath\meinConfig.json"
+    $cfgFile = "$p.cfg\meinConfig.json"
     
     # Prüfen/Erstellen
     if (!(Test-Path $cfgFile)) {
@@ -117,8 +210,8 @@ function Opt3 {
         }
         
         # Verzeichnis prüfen
-        if (!(Test-Path $cfgPath)) {
-            md $cfgPath -Force >$null
+        if (!(Test-Path $p.cfg)) {
+            md $p.cfg -Force >$null
         }
         
         # Speichern
@@ -143,6 +236,9 @@ function Opt3 {
 
 # Untermenü
 function SubMenu {
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Admin-Modus" : "Eingeschränkter Modus"
+    
     # UX-Funktion prüfen
     $hasUX = Get-Command SMenu -EA SilentlyContinue
     
@@ -170,7 +266,7 @@ function SubMenu {
     
     if ($hasUX) {
         # UX-Funktion nutzen
-        $r = SMenu -t "Untermenü" -m ($isAdmin ? "Admin-Modus" : "User-Modus") -opts $opts -back -exit
+        $r = SMenu -t "Untermenü" -m $statusText -opts $opts -back -exit
         
         # Die SMenu-Funktion beendet den Prozess bereits bei X
         # Wir müssen hier nur das Ergebnis B abfangen
@@ -182,12 +278,17 @@ function SubMenu {
         cls
         
         if (Get-Command Title -EA SilentlyContinue) {
-            Title "Untermenü" ($isAdmin ? "Admin-Modus" : "User-Modus")
+            Title "Untermenü" $statusText
         } else {
             Write-Host "+===============================================+"
             Write-Host "|                Untermenü                     |"
-            Write-Host "|         $($isAdmin ? '(Admin-Modus)' : '(User-Modus)')        |"
+            Write-Host "|         ($statusText)        |"
             Write-Host "+===============================================+"
+        }
+        
+        # Adminrechte-Warnung anzeigen
+        if (!$hasAdminRights) {
+            Write-Host "`nHinweis: Keine Administratorrechte. Einige Funktionen könnten eingeschränkt sein." -ForegroundColor Yellow
         }
         
         # Optionen
@@ -224,6 +325,9 @@ function Menu {
     # UX-Funktion prüfen
     $hasUX = Get-Command SMenu -EA SilentlyContinue
     
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Admin-Modus" : "Eingeschränkter Modus"
+    
     # Menüoptionen
     $opts = @{
         "1" = @{
@@ -246,7 +350,7 @@ function Menu {
     
     if ($hasUX) {
         # UX-Modul nutzen
-        $r = SMenu -t "Mein Skript-Titel" -m ($isAdmin ? "Admin-Modus" : "User-Modus") -opts $opts -back -exit
+        $r = SMenu -t "Mein Skript-Titel" -m $statusText -opts $opts -back -exit
         
         if ($r -eq "B") {
             return
@@ -256,8 +360,13 @@ function Menu {
         cls
         Write-Host "+===============================================+"
         Write-Host "|             Mein Skript-Titel                |"
-        Write-Host "|         $($isAdmin ? '(Admin-Modus)' : '(User-Modus)')        |"
+        Write-Host "|         ($statusText)        |"
         Write-Host "+===============================================+"
+        
+        # Adminrechte-Warnung anzeigen
+        if (!$hasAdminRights) {
+            Write-Host "`nHinweis: Keine Administratorrechte. Einige Funktionen könnten eingeschränkt sein." -ForegroundColor Yellow
+        }
         
         # Optionen anzeigen
         foreach ($k in ($opts.Keys | Sort)) {
@@ -290,5 +399,12 @@ function Menu {
 
 # Skriptstart
 Log "Skript gestartet" -t "Information"
+
+# Admin-Rechte anzeigen
+if ($useAdminMod -and (Get-Command IsAdmin -EA SilentlyContinue)) {
+    $adminStatus = $hasAdminRights ? "Ja" : "Nein"
+    Log "Admin-Rechte: $adminStatus" ($hasAdminRights ? "Information" : "Warning")
+}
+
 Menu
 Log "Skript beendet" -t "Information"

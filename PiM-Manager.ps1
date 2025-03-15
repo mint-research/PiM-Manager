@@ -44,6 +44,7 @@ function GetPaths([string]$s = $PSScriptRoot) {
     $p.uxMod = Join-Path $p.mod "ux.psm1"
     $p.pathsMod = Join-Path $p.mod "paths.psm1"
     $p.cfgMod = Join-Path $p.mod "config.psm1"
+    $p.adminMod = Join-Path $p.mod "admin.psm1"
     $p.settings = Join-Path $p.cfg "settings.json"
     $p.userSettings = Join-Path $p.cfg "user-settings.json"
     return $p
@@ -78,6 +79,7 @@ try {
         settings = "$PSScriptRoot\config\settings.json"
         logs = "$PSScriptRoot\temp\logs"
         cfgMod = "$PSScriptRoot\modules\config.psm1"
+        adminMod = "$PSScriptRoot\modules\admin.psm1"
     }
 }
 
@@ -87,6 +89,24 @@ if (Test-Path $errMod) {
     try { Import-Module $errMod -Force -EA Stop }
     catch { 
         Write-Host "Fehlermodul konnte nicht geladen werden: $_" -ForegroundColor Red 
+    }
+}
+
+# Admin-Modul laden
+$useAdminMod = $false
+if (Test-Path $p.adminMod) {
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        $useAdminMod = SafeOp {
+            Import-Module $p.adminMod -Force -EA Stop
+            return $true
+        } -m "Admin-Modul konnte nicht geladen werden" -def $false
+    } else {
+        try {
+            Import-Module $p.adminMod -Force -EA Stop
+            $useAdminMod = $true
+        } catch {
+            Write-Host "Admin-Modul konnte nicht geladen werden: $_" -ForegroundColor Yellow
+        }
     }
 }
 
@@ -189,181 +209,4 @@ function LoadCfg {
             return @{Logging = @{Enabled = $false; Path = "temp\logs"; Mode = "PiM"}}
         }
     }
-}
-
-# Logging initialisieren
-function ILog {
-    # Standardwerte
-    $en = $false
-    $path = "temp\logs"
-    $m = "PiM"
-    
-    # Konfiguration laden
-    $cfg = LoadCfg
-    
-    # Werte extrahieren
-    $en = $cfg.Logging.Enabled
-    $path = $cfg.Logging.Path
-    
-    # Mode-Parameter prüfen
-    if (Get-Member -InputObject $cfg.Logging -Name "Mode" -MemberType Properties) {
-        $m = $cfg.Logging.Mode
-    }
-    
-    # Logging starten wenn aktiviert
-    if ($en) {
-        $logDir = Join-Path $p.root $path
-        
-        # Verzeichnis erstellen
-        if (!(Test-Path $logDir)) { 
-            SafeOp {
-                md $logDir -Force >$null
-            } -m "Log-Verzeichnis konnte nicht erstellt werden" -t "Warning"
-        }
-        
-        # Dateiname mit Zeitstempel
-        $ts = Get-Date -Format "yyyy-MM-dd-HH-mm-ss"
-        $sfx = $m -eq "PowerShell" ? "psh" : "pim"
-        $logFile = Join-Path $logDir "log-$ts-$sfx.txt"
-        
-        # Transcript starten
-        SafeOp {
-            Start-Transcript -Path $logFile -Append
-        } -m "Transcript konnte nicht gestartet werden" -t "Warning"
-        
-        $mText = $m -eq "PowerShell" ? "PowerShell" : "PiM-Manager"
-        Write-Host "Logging aktiviert für: $mText" -ForegroundColor Green
-        Write-Host "Session wird aufgezeichnet: $logFile" -ForegroundColor Green
-    }
-    
-    # Logging-Info zurückgeben
-    return [PSCustomObject]@{
-        Enabled = $en
-        Mode = $m
-    }
-}
-
-# UX-Modul laden
-$uxMod = $p.uxMod
-
-if (Test-Path $uxMod) {
-    SafeOp {
-        Import-Module $uxMod -Force -EA Stop
-        Write-Host "Modul geladen: $uxMod" -ForegroundColor Green
-    } -m "UX-Modul konnte nicht geladen werden" -t "Fatal"
-} else {
-    if (Get-Command Err -EA SilentlyContinue) {
-        Err "Modul nicht gefunden: $uxMod" -t "Fatal"
-    } else {
-        Write-Host "Modul nicht gefunden: $uxMod" -ForegroundColor Red
-        Write-Host "Verzeichnis: $($p.root)" -ForegroundColor Yellow
-        Write-Host "Stellen Sie sicher, dass 'modules\ux.psm1' existiert." -ForegroundColor Yellow
-        exit
-    }
-}
-
-# Menüsystem starten
-function Menu {
-    # Pfade definieren
-    $sPath = $p.scripts
-    $aPath = Join-Path $sPath "admin"
-    
-    # Verzeichnisse prüfen/erstellen
-    if (!(Test-Path $sPath)) {
-        Write-Host "Verzeichnis 'scripts' nicht gefunden. Wird erstellt..." -ForegroundColor Yellow
-        SafeOp {
-            md $sPath -Force >$null
-        } -m "Scripts-Verzeichnis konnte nicht erstellt werden" -t "Warning"
-    }
-    
-    if (!(Test-Path $aPath)) {
-        Write-Host "Verzeichnis 'scripts\admin' nicht gefunden. Wird erstellt..." -ForegroundColor Yellow
-        SafeOp {
-            md $aPath -Force >$null
-        } -m "Admin-Verzeichnis konnte nicht erstellt werden" -t "Warning"
-    }
-    
-    $isAdmin = $false
-    $pStack = New-Object System.Collections.Stack
-    $curPath = $sPath
-
-    while ($true) {
-        # Pfad nach Modus setzen
-        if ($isAdmin -and $pStack.Count -eq 0) {
-            $curPath = $aPath
-        } elseif (!$isAdmin -and $pStack.Count -eq 0) {
-            $curPath = $sPath
-        }
-
-        # Hauptmenü-Check
-        $isRoot = $pStack.Count -eq 0
-        $parent = if (!$isRoot) { $pStack.Peek() } else { "" }
-
-        # Menü anzeigen
-        $menu = SafeOp {
-            ShowMenu $curPath $isRoot $parent
-        } -m "Menü konnte nicht angezeigt werden" -def @{}
-        
-        $ch = Read-Host "`nOption wählen"
-
-        # Eingabe verarbeiten
-        if ($ch -match "^[Xx]$") { 
-            # Beenden
-            break  
-        }
-        elseif ($ch -match "^[Mm]$") {
-            # Modus wechseln
-            $isAdmin = !$isAdmin
-            $pStack.Clear()
-            $curPath = $isAdmin ? $aPath : $sPath
-        }
-        elseif ($ch -match "^[Bb]$" -and !$isRoot) {
-            # Zurück
-            $curPath = $pStack.Pop()
-        }
-        elseif ($menu.ContainsKey([int]$ch)) {
-            # Menüeintrag
-            $item = $menu[[int]$ch]
-            if (Test-Path $item -PathType Container) {
-                # In Ordner navigieren
-                Write-Host "Navigiere zu: $item" -ForegroundColor Yellow
-                Start-Sleep -Seconds 1
-                $pStack.Push($curPath)
-                $curPath = $item
-            } 
-            elseif ($item -match "\.ps1$") {
-                # Skript ausführen
-                Write-Host "Ausführen: $item" -ForegroundColor Yellow
-                Start-Sleep -Seconds 1
-                SafeOp {
-                    & $item
-                } -m "Skript konnte nicht ausgeführt werden: $item" -t "Warning"
-            }
-        }
-    }
-}
-
-# Logging initialisieren
-$logInfo = ILog
-$logEnabled = $logInfo.Enabled
-$logMode = $logInfo.Mode
-
-# UX-Funktionen prüfen und starten
-if (Get-Command ShowMenu -EA SilentlyContinue) {
-    Write-Host "PiM-Manager wird gestartet..." -ForegroundColor Green
-    Menu
-} else {
-    if (Get-Command Err -EA SilentlyContinue) {
-        Err "Funktion 'ShowMenu' nicht gefunden. Prüfe 'modules\ux.psm1'." -t "Fatal"
-    } else {
-        Write-Host "❌ Fehler: Funktion 'ShowMenu' nicht gefunden. Prüfe 'modules\ux.psm1'." -ForegroundColor Red
-    }
-}
-
-# Logging beenden
-if ($logEnabled) {
-    Write-Host "Logging wird beendet..." -ForegroundColor Yellow
-    SafeOp {
-        Stop-Transcript
-    } -m "Transcript konnte nicht beendet werden" -t "Warning"
 }

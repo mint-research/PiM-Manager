@@ -18,6 +18,7 @@ if (Test-Path $pathsMod) {
             errMod = "$root\modules\error.psm1"
             uxMod = "$root\modules\ux.psm1"
             cfgMod = "$root\modules\config.psm1"
+            adminMod = "$root\modules\admin.psm1"
         }
     }
 } else {
@@ -31,6 +32,7 @@ if (Test-Path $pathsMod) {
         errMod = "$root\modules\error.psm1"
         uxMod = "$root\modules\ux.psm1"
         cfgMod = "$root\modules\config.psm1"
+        adminMod = "$root\modules\admin.psm1"
     }
 }
 
@@ -59,6 +61,55 @@ if (Test-Path $p.uxMod) {
     }
 }
 
+# Admin-Modul laden
+$useAdminMod = $false
+if (Test-Path $p.adminMod) {
+    if (Get-Command SafeOp -EA SilentlyContinue) {
+        $useAdminMod = SafeOp {
+            Import-Module $p.adminMod -Force -EA Stop
+            return $true
+        } -m "Admin-Modul konnte nicht geladen werden" -def $false
+    } else {
+        try {
+            Import-Module $p.adminMod -Force -EA Stop
+            $useAdminMod = $true
+        } catch {
+            Write-Host "Admin-Modul konnte nicht geladen werden: $_" -ForegroundColor Yellow
+        }
+    }
+}
+
+# Administratorrechte prüfen
+$hasAdminRights = $false
+if ($useAdminMod -and (Get-Command IsAdmin -EA SilentlyContinue)) {
+    $hasAdminRights = IsAdmin
+    
+    # Wenn keine Admin-Rechte, warnen und eventuell Rechte anfordern
+    if (!$hasAdminRights) {
+        if (Get-Command RequireAdmin -EA SilentlyContinue) {
+            RequireAdmin -message "Für Cleanup-Operationen werden Administratorrechte empfohlen, da einige Dateien möglicherweise geschützt sind."
+            # Nach RequireAdmin Aufruf nochmals prüfen
+            $hasAdminRights = IsAdmin
+        } else {
+            Write-Host "Warnung: Keine Administratorrechte. Einige Dateien können möglicherweise nicht gelöscht werden." -ForegroundColor Yellow
+        }
+    }
+} else {
+    # Fallback-Methode zur Berechtigungsprüfung
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal $identity
+        $hasAdminRights = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        
+        if (!$hasAdminRights) {
+            Write-Host "Warnung: Keine Administratorrechte. Einige Dateien können möglicherweise nicht gelöscht werden." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "Fehler bei der Berechtigungsprüfung: $_" -ForegroundColor Red
+        Write-Host "Es wird angenommen, dass keine Administratorrechte vorliegen." -ForegroundColor Yellow
+    }
+}
+
 # Konfigurationsmodul laden
 $useCfgMod = $false
 if (Test-Path $p.cfgMod) {
@@ -76,7 +127,6 @@ if (Test-Path $p.cfgMod) {
         }
     }
 }
-
 # Cleanup-Konfiguration laden/erstellen
 function GetCleanupConfig {
     # Bei aktivem Konfigurationsmodul dieses nutzen
@@ -199,19 +249,27 @@ function SelType {
     $sel = @()
     cls
     
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Admin-Modus" : "Eingeschränkter Modus"
+    
     if (Get-Command Title -EA SilentlyContinue) {
-        try { Title "Dateitypen auswählen" "Admin-Modus" }
+        try { Title "Dateitypen auswählen" $statusText }
         catch {
             Write-Host "+===============================================+"
             Write-Host "|            Dateitypen auswählen              |"
-            Write-Host "|             (Admin-Modus)                    |"
+            Write-Host "|             ($statusText)                    |"
             Write-Host "+===============================================+"
         }
     } else {
         Write-Host "+===============================================+"
         Write-Host "|            Dateitypen auswählen              |"
-        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "|             ($statusText)                    |"
         Write-Host "+===============================================+"
+    }
+    
+    # Adminrechte-Warnung anzeigen
+    if (!$hasAdminRights) {
+        Write-Host "`nHinweis: Keine Administratorrechte. Manche Dateien können nicht gelöscht werden." -ForegroundColor Yellow
     }
     
     # Liste der Ordner
@@ -289,13 +347,21 @@ function SelTime {
     # Konfiguration laden
     $cfg = GetCleanupConfig
     
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Admin-Modus" : "Eingeschränkter Modus"
+    
     if (Get-Command Title -EA SilentlyContinue) {
-        Title "Zeitraum auswählen" "Admin-Modus"
+        Title "Zeitraum auswählen" $statusText
     } else {
         Write-Host "+===============================================+"
         Write-Host "|             Zeitraum auswählen               |"
-        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "|             ($statusText)                    |"
         Write-Host "+===============================================+"
+    }
+    
+    # Adminrechte-Warnung anzeigen
+    if (!$hasAdminRights) {
+        Write-Host "`nHinweis: Keine Administratorrechte. Manche Dateien können nicht gelöscht werden." -ForegroundColor Yellow
     }
     
     Write-Host "`nWelche Dateien sollen bereinigt werden?`n" -ForegroundColor Cyan
@@ -357,7 +423,6 @@ function SelTime {
         }
     }
 }
-
 # Bereinigen
 function Clean($dirs, $cutoffDate) {
     if ($dirs.Count -eq 0 -or $null -eq $cutoffDate) {
@@ -403,13 +468,21 @@ function Clean($dirs, $cutoffDate) {
     # Ergebnisanzeige
     cls
     
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Admin-Modus" : "Eingeschränkter Modus"
+    
     if (Get-Command Title -EA SilentlyContinue) {
-        Title "Bereinigung abgeschlossen" "Admin-Modus"
+        Title "Bereinigung abgeschlossen" $statusText
     } else {
         Write-Host "+===============================================+"
         Write-Host "|          Bereinigung abgeschlossen           |"
-        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "|             ($statusText)                    |"
         Write-Host "+===============================================+"
+    }
+    
+    # Adminrechte-Status anzeigen
+    if (!$hasAdminRights) {
+        Write-Host "`nHinweis: Einige Dateien konnten aufgrund fehlender Administratorrechte nicht gelöscht werden." -ForegroundColor Yellow
     }
     
     # Gesamtausgabe
@@ -653,7 +726,7 @@ function CleanDir {
             }
         }
         
-        foreach ($dir in $emptyDirs) {
+foreach ($dir in $emptyDirs) {
             try {
                 Log "Entferne leeren Ordner: $($dir.FullName)" "Info"
                 
@@ -687,13 +760,21 @@ function Stats {
     # Konfiguration laden
     $cfg = GetCleanupConfig
     
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Admin-Modus" : "Eingeschränkter Modus"
+    
     if (Get-Command Title -EA SilentlyContinue) {
-        Title "Temp-Statistik" "Admin-Modus"
+        Title "Temp-Statistik" $statusText
     } else {
         Write-Host "+===============================================+"
         Write-Host "|             Temp-Statistik                   |"
-        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "|             ($statusText)                    |"
         Write-Host "+===============================================+"
+    }
+    
+    # Adminrechte-Warnung anzeigen
+    if (!$hasAdminRights) {
+        Write-Host "`nHinweis: Keine Administratorrechte. Einige Dateien können möglicherweise nicht analysiert werden." -ForegroundColor Yellow
     }
     
     # Temp-Ordner prüfen
@@ -856,15 +937,31 @@ function EditConfig {
         return
     }
     
+    # Admin-Rechte prüfen und ggf. anfordern
+    if (!$hasAdminRights -and $useAdminMod -and (Get-Command RequireAdmin -EA SilentlyContinue)) {
+        Write-Host "Für Änderungen an der Konfiguration werden Administratorrechte empfohlen." -ForegroundColor Yellow
+        RequireAdmin -message "Möchten Sie PowerShell mit Administratorrechten neu starten?"
+        # Nach RequireAdmin Aufruf nochmals prüfen
+        $hasAdminRights = IsAdmin
+    }
+    
     cls
     
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Admin-Modus" : "Eingeschränkter Modus"
+    
     if (Get-Command Title -EA SilentlyContinue) {
-        Title "Cleanup-Konfiguration" "Admin-Modus"
+        Title "Cleanup-Konfiguration" $statusText
     } else {
         Write-Host "+===============================================+"
         Write-Host "|           Cleanup-Konfiguration              |"
-        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "|             ($statusText)                    |"
         Write-Host "+===============================================+"
+    }
+    
+    # Adminrechte-Warnung anzeigen
+    if (!$hasAdminRights) {
+        Write-Host "`nHinweis: Keine Administratorrechte. Konfigurationsänderungen könnten fehlschlagen." -ForegroundColor Yellow
     }
     
     # Aktuelle Konfiguration laden
@@ -1022,6 +1119,11 @@ function AutoCleanup {
     
     Log "Starte automatische Bereinigung..." "Info"
     
+    # Admin-Status prüfen und ggf. warnen
+    if (!$hasAdminRights -and $useAdminMod -and (Get-Command IsAdmin -EA SilentlyContinue)) {
+        Log "Keine Administratorrechte. Einige Dateien können möglicherweise nicht gelöscht werden." "Warning"
+    }
+    
     # Alle Verzeichnisse bereinigen
     $dirs = GetDirs
     
@@ -1049,6 +1151,13 @@ function AutoCleanup {
 
 # Hauptmenü
 function Menu {
+    # Admin-Rechte für Cleanup-Operationen empfehlen/prüfen
+    if (!$hasAdminRights -and $useAdminMod -and (Get-Command RequireAdmin -EA SilentlyContinue)) {
+        RequireAdmin -message "Für vollständige Cleanup-Operationen werden Administratorrechte empfohlen."
+        # Nach RequireAdmin Aufruf nochmals prüfen
+        $hasAdminRights = IsAdmin
+    }
+    
     # Prüfen auf automatische Bereinigung
     $cfg = GetCleanupConfig
     
@@ -1058,6 +1167,9 @@ function Menu {
     }
     
     $hasUX = Get-Command SMenu -EA SilentlyContinue
+    
+    # Status-Text basierend auf Admin-Rechten
+    $statusText = $hasAdminRights ? "Admin-Modus" : "Eingeschränkter Modus"
     
     $opts = @{
         "1" = @{
@@ -1095,18 +1207,23 @@ function Menu {
     if ($hasUX) {
         if (Get-Command SafeOp -EA SilentlyContinue) {
             SafeOp {
-                SMenu -t "Temp-Bereinigung" -m "Admin-Modus" -opts $opts -back -exit
+                SMenu -t "Temp-Bereinigung" -m $statusText -opts $opts -back -exit
             } -m "Menü konnte nicht angezeigt werden" -t "Error"
         } else {
-            SMenu -t "Temp-Bereinigung" -m "Admin-Modus" -opts $opts -back -exit
+            SMenu -t "Temp-Bereinigung" -m $statusText -opts $opts -back -exit
         }
     } else {
         # Eigene Menü-Implementierung (Standardmuster)
         cls
         Write-Host "+===============================================+"
         Write-Host "|            Temp-Bereinigung                  |"
-        Write-Host "|             (Admin-Modus)                    |"
+        Write-Host "|             ($statusText)                    |"
         Write-Host "+===============================================+"
+        
+        # Adminrechte-Warnung anzeigen
+        if (!$hasAdminRights) {
+            Write-Host "`nHinweis: Keine Administratorrechte. Manche Dateien können nicht gelöscht werden." -ForegroundColor Yellow
+        }
         
         foreach ($k in ($opts.Keys | Sort-Object)) {
             Write-Host "    $k       $($opts[$k].Display)"
@@ -1148,5 +1265,12 @@ function Menu {
 
 # Skriptstart
 Log "Cleanup-Tool gestartet" "Info"
+
+# Admin-Rechte anzeigen
+if ($useAdminMod -and (Get-Command IsAdmin -EA SilentlyContinue)) {
+    $hasAdminRights = IsAdmin
+    Log "Admin-Rechte: $($hasAdminRights ? 'Ja' : 'Nein')" ($hasAdminRights ? "Info" : "Warning")
+}
+
 Menu
 Log "Cleanup-Tool beendet" "Info"
